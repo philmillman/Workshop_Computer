@@ -8,7 +8,7 @@
   Filters inside and prior to reverb 'tank' are added from the above, to give
     high or low pass filtering
 
-  Implemented usign integer arithmetic, for fast execution on RP2040. Products implemented 
+  Implemented using integer arithmetic, for fast execution on RP2040. Products implemented 
   as (a*b)>>16 (for int32_t a,b), which benefits from single-cycle multiply on RP2040.
   Shift operations on negative are undefined behaviour in C, but gcc compiles
   to ASR instruction, which divides negative numbers by two, rounding towards
