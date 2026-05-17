@@ -12,12 +12,11 @@ add_executable(pocket_scion)
 
 target_sources(pocket_scion PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/pocket_scion.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/reverb_dsp.c
     ${CMAKE_CURRENT_LIST_DIR}/usb_midi_host.c
     ${CMAKE_CURRENT_LIST_DIR}/usb_midi_host_app_driver.c
 )
 
-# Include current directory (tusb_config.h, delay.h, reverb_dsp.h, etc.)
+# Include current directory (tusb_config.h, placeholder_spatial.h, etc.)
 # and ComputerCard library directory.
 target_include_directories(pocket_scion PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}

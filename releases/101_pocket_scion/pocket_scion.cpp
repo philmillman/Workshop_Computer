@@ -8,26 +8,29 @@
  *  - USB MIDI host: receives Note On/Off and Pitch Bend from the Scion
  *  - 2-channel monophonic CV/Gate output (v/Oct + gate) for configurable
  *    MIDI channels A and B
- *  - Stereo audio processing of the Scion's audio output: delay + plate reverb
- *  - Clock input (Pulse In 1) locks delay time to incoming tempo
- *  - CV In 1 modulates FX parameters (target selected by switch position)
+ *  - Stereo spatial echo: 3-parallel-delay-line effect inspired by the
+ *    Fairfield Circuitry Placeholder (EB topology).  Three taps at
+ *    golden-ratio time relationships (T, 0.618T, 0.382T) are panned to
+ *    create a spatial stereo image.
+ *  - Clock input (Pulse In 1) locks primary delay time to incoming tempo
+ *  - CV In 1 modulates delay time
  *  - MIDI channel selection stored in flash
  *
  * Hardware mapping:
  *  Audio In 1/2  : Scion left/right audio output
- *  Audio Out 1/2 : Processed (delay + reverb) audio
+ *  Audio Out 1/2 : Processed spatial echo audio
  *  CV Out 1      : v/Oct pitch, MIDI channel A
  *  CV Out 2      : v/Oct pitch, MIDI channel B
  *  Pulse Out 1   : Gate, MIDI channel A
  *  Pulse Out 2   : Gate, MIDI channel B
  *  Pulse In 1    : External clock input
- *  CV In 1       : FX CV modulation
+ *  CV In 1       : Delay time modulation (±50 ms)
  *  Main Knob     : Dry/wet mix
- *  X Knob        : Reverb size/decay
- *  Y Knob        : Delay feedback
- *  Switch Up     : Reverb-heavy blend (CV mod → reverb size)
- *  Switch Middle : Balanced delay+reverb blend (CV mod → delay time)
- *  Switch Down   : Delay-heavy blend (CV mod → dry/wet mix)
+ *  X Knob        : Time (primary tap delay length, 0–250 ms)
+ *  Y Knob        : Feedback/regeneration (0–95 %)
+ *  Switch Up     : Wide stereo spread (tap 1 hard-L, tap 3 hard-R)
+ *  Switch Middle : Medium stereo spread
+ *  Switch Down   : Narrow / mono (all taps centred)
  *
  * MIDI channel selection UI:
  *  Hold switch Up for > 2 seconds   → enter "Select Channel A" mode
@@ -50,8 +53,7 @@
 #include "bsp/board.h"
 #include "tusb.h"
 #include "usb_midi_host.h"
-#include "delay.h"
-#include "reverb_dsp.h"
+#include "placeholder_spatial.h"
 
 #include <string.h>
 
@@ -78,9 +80,6 @@ static constexpr uint8_t SETTINGS_MAGIC = 0xA7;
 static constexpr int32_t BEND_MV_PER_UNIT_NUM = 166;
 static constexpr int32_t BEND_MV_PER_UNIT_DEN = 8192;
 
-// Delay at 250 ms (12 000 samples) for maximum, knob-driven
-static constexpr int32_t DELAY_KNOB_MAX_SAMPLES = 12000;
-
 // CV In smoothing: IIR coefficient ≈ (127/128) for ~100 Hz LPF at 48 kHz
 static constexpr int32_t CV_SMOOTH_COEFF = 127;
 
@@ -102,9 +101,6 @@ static volatile bool     g_saveRequest    = false; // set by Core 0, handled by 
 // USB device address (used by mount/rx callbacks and USBCore)
 static uint8_t g_midiDevAddr = 0;
 
-// Reverb instance (heap allocated once in main)
-static reverb *g_reverb = nullptr;
-
 // ---------------------------------------------------------------------------
 // PocketScion class
 // ---------------------------------------------------------------------------
@@ -113,7 +109,7 @@ class PocketScion : public ComputerCard
 public:
     PocketScion()
     {
-        delay_            = StereoDelay();
+        fx_               = PlaceholderSpatial();
         uiState_          = UIState::NORMAL;
         switchHoldTimer_  = 0;
         tempChannelA_     = 0;
@@ -196,58 +192,30 @@ protected:
         int32_t yKnob    = KnobVal(Y);
         Switch  sw       = SwitchVal();
 
-        // Map switch position to wet signal blend weights (delay vs. reverb)
-        // delayWet + reverbWet = 1024 (Q10 scaling)
-        int32_t delayWet, reverbWet;
+        // Switch selects stereo spread of the 3 delay taps
+        int32_t spread;
         switch (sw)
         {
-        case Switch::Down:   delayWet = 1024; reverbWet = 0;    break;
-        case Switch::Up:     delayWet = 0;    reverbWet = 1024; break;
-        default:             delayWet = 512;  reverbWet = 512;  break; // Middle
+        case Switch::Up:     spread = 4096; break;  // wide: tap1 L, tap3 R
+        case Switch::Middle: spread = 2048; break;  // medium
+        default:             spread = 0;    break;  // Down: mono (all centred)
         }
 
-        // Dry/wet mix from main knob: 0 = full dry, 4095 = full wet
-        // wetLevel uses Q12, dryLevel uses Q12
-        int32_t wetLevel = mainKnob;   // 0–4095
+        // Primary tap time from X knob (1–12000 samples = ~0–250 ms)
+        int32_t timeSamples = 1 + ((xKnob * (PlaceholderSpatial::TIME_MAX - 1)) >> 12);
+
+        // Feedback from Y knob (0–4095 → 0–31130, ~95 % max)
+        int32_t feedbackLevel = (yKnob * 31130) >> 12;
+
+        // Dry/wet mix from Main knob
+        int32_t wetLevel = mainKnob;          // 0–4095
         int32_t dryLevel = 4095 - mainKnob;
 
-        // CV modulation target depends on switch position
-        int32_t cvMod = cvSmoothed_;   // –2048..2047
-        int32_t reverbSize, delayTimeSamples, feedbackLevel;
-
-        // Base reverb size from X knob (0–4095 → 0–65535 for reverb API)
-        reverbSize = xKnob << 4;  // 0–65520
-
-        // Base delay time from main knob OR clock
-        delayTimeSamples = (mainKnob * DELAY_KNOB_MAX_SAMPLES) >> 12;
-        if (delayTimeSamples < 1) delayTimeSamples = 1;
-
-        // Base feedback from Y knob (0–4095 → 0–31130, ~95 % max)
-        feedbackLevel = (yKnob * 31130) >> 12;
-
-        switch (sw)
-        {
-        case Switch::Up:
-            // CV In 1 modulates reverb size
-            reverbSize += cvMod << 3;  // ±16384 swing
-            if (reverbSize < 0)     reverbSize = 0;
-            if (reverbSize > 65535) reverbSize = 65535;
-            break;
-        case Switch::Middle:
-            // CV In 1 modulates delay time (±50 ms = ±2400 samples)
-            delayTimeSamples += (cvMod * 2400) >> 11;
-            if (delayTimeSamples < 1) delayTimeSamples = 1;
-            if (delayTimeSamples >= StereoDelay::DELAY_MAX)
-                delayTimeSamples = StereoDelay::DELAY_MAX - 1;
-            break;
-        case Switch::Down:
-            // CV In 1 modulates dry/wet mix
-            wetLevel += cvMod >> 1;
-            if (wetLevel < 0)    wetLevel = 0;
-            if (wetLevel > 4095) wetLevel = 4095;
-            dryLevel = 4095 - wetLevel;
-            break;
-        }
+        // CV In 1 always trims delay time by ±50 ms (±2400 samples)
+        timeSamples += (cvSmoothed_ * 2400) >> 11;
+        if (timeSamples < 1) timeSamples = 1;
+        if (timeSamples > PlaceholderSpatial::TIME_MAX)
+            timeSamples = PlaceholderSpatial::TIME_MAX;
 
         // -----------------------------------------------------------------
         // 4. Clock input: detect rising edge on Pulse In 1, measure period
@@ -280,57 +248,30 @@ protected:
             }
         }
 
-        // When clock is locked, override delay time
+        // When clock is locked, override primary tap time from X knob
         if (clockDetected_)
         {
-            delayTimeSamples = (int32_t)clockPeriod_;
-            if (delayTimeSamples >= StereoDelay::DELAY_MAX)
-                delayTimeSamples = StereoDelay::DELAY_MAX - 1;
+            timeSamples = (int32_t)clockPeriod_;
+            if (timeSamples > PlaceholderSpatial::TIME_MAX)
+                timeSamples = PlaceholderSpatial::TIME_MAX;
         }
 
         // -----------------------------------------------------------------
-        // 5. Apply FX: delay then reverb (series topology)
+        // 5. Apply spatial effect: 3 parallel delay taps (Placeholder topology)
         // -----------------------------------------------------------------
-        delay_.setDelayTime(delayTimeSamples);
-        delay_.setFeedback(feedbackLevel);
+        fx_.setTime(timeSamples);
+        fx_.setFeedback(feedbackLevel);
+        fx_.setSpread(spread);
 
-        int32_t delayOutL, delayOutR;
-        delay_.process(inL, inR, delayOutL, delayOutR);
+        int32_t wetL, wetR;
+        fx_.process(inL, inR, wetL, wetR);
 
-        // Reverb: feed mono sum of delay output into the plate.
-        // Scale up to ±16384 to match the reverb algorithm's expected input
-        // range (same as the original Reverb+ card which passes ±16384 input).
-        // Output from reverb_get_left/right is approximately ±32768 at that
-        // input level; divide by 16 (>> 4) to bring back to ±2048 range.
-        if (g_reverb)
-        {
-            reverb_set_size(g_reverb, reverbSize);
-            reverb_setDecayDiffusion(g_reverb, (reverbSize * 3) >> 2);
+        // Final dry/wet mix (Q12 scale factors)
+        int32_t outL = ((inL * dryLevel) + (wetL * wetLevel)) >> 12;
+        int32_t outR = ((inR * dryLevel) + (wetR * wetLevel)) >> 12;
 
-            // delayOutL/R are ±2048; sum is ±4096; << 2 gives ±16384
-            int32_t monoSum = (delayOutL + delayOutR) << 2;
-            reverb_process(g_reverb, monoSum);
-
-            int32_t revL = reverb_get_left(g_reverb)  >> 4;   // ±2048
-            int32_t revR = reverb_get_right(g_reverb) >> 4;   // ±2048
-
-            // Blend delay and reverb wet signals according to switch position
-            int32_t wetL = ((delayOutL * delayWet) + (revL * reverbWet)) >> 10;
-            int32_t wetR = ((delayOutR * delayWet) + (revR * reverbWet)) >> 10;
-
-            // Final dry/wet mix (Q12 scale factors)
-            int32_t outL = ((inL * dryLevel) + (wetL * wetLevel)) >> 12;
-            int32_t outR = ((inR * dryLevel) + (wetR * wetLevel)) >> 12;
-
-            AudioOut1((int16_t)outL);
-            AudioOut2((int16_t)outR);
-        }
-        else
-        {
-            // Reverb not initialised yet: pass through dry audio
-            AudioOut1((int16_t)inL);
-            AudioOut2((int16_t)inR);
-        }
+        AudioOut1((int16_t)outL);
+        AudioOut2((int16_t)outR);
 
         // -----------------------------------------------------------------
         // 6. CV / Gate outputs from MIDI state
@@ -546,7 +487,7 @@ private:
     // -------------------------------------------------------------------------
     // Member data
     // -------------------------------------------------------------------------
-    StereoDelay delay_;
+    PlaceholderSpatial fx_;
 
     UIState  uiState_;
     uint32_t switchHoldTimer_;
@@ -705,9 +646,6 @@ int main()
     // Register Core 0 as a multicore-lockout victim so that Core 1 can safely
     // pause Core 0 when writing to flash.
     multicore_lockout_victim_init();
-
-    // Allocate reverb instance on heap (≈ 80 KB)
-    g_reverb = reverb_create();
 
     // Load persisted MIDI channel settings from flash
     g_card.LoadSettings();

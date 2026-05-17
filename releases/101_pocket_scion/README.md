@@ -2,8 +2,8 @@
 
 A Computer card for the Music Thing Workshop System that connects to an
 [Instruo Pocket Scion](https://instruomodular.com/product/pocket-scion/)
-via USB MIDI host, processes the Scion's audio output, and converts MIDI
-notes to CV/Gate for driving other modules.
+via USB MIDI host, applies a spatial echo effect to the Scion's audio output,
+and converts MIDI notes to CV/Gate for driving other modules.
 
 ---
 
@@ -14,12 +14,14 @@ notes to CV/Gate for driving other modules.
 - **2-channel monophonic CV/Gate output** — independently configurable
   MIDI channels (A & B) with v/Oct + gate, including ±2-semitone pitch
   bend tracking.
-- **Stereo audio processing** — delay and plate reverb in series, applied
-  to the Scion's stereo audio output.
-- **Clock input** — Pulse In 1 locks the delay time to external clock tempo
-  (4 pulses/beat assumed; period auto-detected).
-- **CV modulation of FX** — CV In 1 modulates a selectable FX parameter
-  depending on switch position.
+- **Spatial echo** — 3-parallel-delay-line effect inspired by the Fairfield
+  Circuitry Placeholder (EB topology).  Three delay taps drawn from the
+  same buffer at golden-ratio time relationships (T, T×0.618, T×0.382) are
+  panned to opposite sides of the stereo field, creating a wide, diffuse
+  spatial image.
+- **Clock input** — Pulse In 1 locks the primary delay time to external
+  clock tempo (period auto-detected from rising edges).
+- **CV modulation** — CV In 1 trims the delay time by ±50 ms.
 - **Settings persistence** — MIDI channel assignments are saved to flash
   and restored on power-up.
 
@@ -38,27 +40,60 @@ On older boards, USB host mode is not available and LED 0 will remain off.
 |---------------|-----------------------------------|
 | Audio In 1    | Scion left audio output           |
 | Audio In 2    | Scion right audio output          |
-| Audio Out 1   | Processed audio left              |
-| Audio Out 2   | Processed audio right             |
+| Audio Out 1   | Spatial echo left                 |
+| Audio Out 2   | Spatial echo right                |
 | CV Out 1      | v/Oct pitch — MIDI channel A      |
 | CV Out 2      | v/Oct pitch — MIDI channel B      |
 | Pulse Out 1   | Gate — MIDI channel A             |
 | Pulse Out 2   | Gate — MIDI channel B             |
-| Pulse In 1    | External clock input (4 ppb)      |
-| CV In 1       | FX parameter modulation           |
+| Pulse In 1    | External clock input              |
+| CV In 1       | Delay time modulation (±50 ms)    |
 
 ---
 
 ## Controls
 
-| Control     | Function                                              |
-|-------------|-------------------------------------------------------|
-| Main Knob   | Dry/wet mix (or delay time when no clock present)     |
-| X Knob      | Reverb size / decay                                   |
-| Y Knob      | Delay feedback (0–95 %)                               |
-| Switch Up   | Reverb-heavy blend; CV In 1 → reverb size             |
-| Switch Mid  | Balanced delay + reverb; CV In 1 → delay time         |
-| Switch Down | Delay-heavy blend; CV In 1 → dry/wet mix              |
+| Control     | Function                                                    |
+|-------------|-------------------------------------------------------------|
+| Main Knob   | Dry/wet mix                                                 |
+| X Knob      | Time — primary tap delay (0–250 ms); locked to clock when   |
+|             | a clock signal is present on Pulse In 1                     |
+| Y Knob      | Feedback/regeneration (0–95 %)                              |
+| Switch Up   | Wide stereo spread (tap 1 hard-L, tap 3 hard-R)             |
+| Switch Mid  | Medium stereo spread                                        |
+| Switch Down | Mono / narrow (all taps centred)                            |
+
+---
+
+## Spatial effect topology (Placeholder EB)
+
+```
+                         ┌──────────────────────────────────────────────┐
+                         │                                              │
+stereo in ──(L+R / 2)──► write ──► [16384-sample mono buffer, 32 KB]   │
+                                      │           │           │         │
+                                    tap 1       tap 2       tap 3       │
+                                  T (long)    T × 0.618   T × 0.382     │
+                                   Pan L       Pan Ctr     Pan R         │
+                                      │           │           │         │
+                                      └─────── sum / 3 ───────┘         │
+                                                  │                      │
+                                               [HPF] ──► × feedback ─────┘
+```
+
+The three taps at golden-ratio time relationships (φ^-1 ≈ 0.618,
+φ^-2 ≈ 0.382) create a naturally non-repeating, diffuse echo pattern.
+Panning the taps to different stereo positions places each echo "in
+space" rather than simply time, giving the characteristic Placeholder
+spatial quality.
+
+### Memory budget
+
+| Component           | RAM    |
+|---------------------|--------|
+| Spatial echo buffer | 32 KB  |
+| Code + stack        | ~50 KB |
+| **Total**           | **~82 KB** (of 256 KB available) |
 
 ---
 
@@ -99,23 +134,6 @@ received note wins on both CV/Gate outputs (last-note priority).
 
 ---
 
-## Audio signal path
-
-```
-Scion audio out → [Computer Audio In] → Delay → Reverb → [Computer Audio Out]
-```
-
-The delay and reverb are in series: the delay output feeds the reverb input.
-This gives well-diffused reverb tails on the repeats.
-
-| Parameter     | Range       |
-|---------------|-------------|
-| Delay time    | 1 ms – 250 ms (or clock-locked up to 250 ms) |
-| Delay feedback | 0 – 95 %   |
-| Reverb        | Dattorro plate algorithm, integer arithmetic |
-
----
-
 ## Building
 
 Requires [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk)
@@ -142,8 +160,7 @@ Flash `pocket_scion.uf2` onto your Computer card.
 
 ## Credits
 
-- Reverb DSP adapted from `releases/20_reverb/` (Dattorro plate algorithm)
-  by Chris Johnson.
+- Spatial echo topology inspired by the Fairfield Circuitry Placeholder (EB revision).
 - USB MIDI host driver from [rppicomidi/usb_midi_host](https://github.com/rppicomidi/usb_midi_host).
 - [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard)
   hardware abstraction library by Chris Johnson.
