@@ -44,7 +44,7 @@ void __not_in_flash_func(buffer_setDelay)(buffer *db, uint16_t tap, uint16_t del
 // Delay functions
 void buffer_init(buffer *db, uint16_t delay)
 {
-	memset(db, 0, sizeof(delay));
+	memset(db, 0, sizeof(*db));
 
 	// Calculate number of bits
 	int16_t x = delay;

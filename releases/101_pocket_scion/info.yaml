@@ -1,5 +1,5 @@
 name: Pocket Scion
-description: USB MIDI host + audio FX (delay & reverb) for the Instruo Pocket Scion
+description: USB MIDI host + spatial echo effect for the Instruo Pocket Scion
 author: philmillman
 platform: PicoSDK
 release_number: 101

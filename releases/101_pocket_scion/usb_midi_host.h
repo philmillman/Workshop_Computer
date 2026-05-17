@@ -45,7 +45,7 @@
 // Note: To figure out how long a USB MIDI 1.0 stream needs to be
 // in bytes, multiply the number of bytes in the stream by 4/3 and
 // round up to the nearest 4 bytes.
-// For exampe, to send a 146 byte SysEx message, 146*4/3 = 194.66...
+// For example, to send a 146 byte SysEx message, 146*4/3 = 194.66...
 // The next nearest 4 byte boundary is 196. So the buffer is 196 bytes,
 // or 49 4-byte USB MIDI packets.
 //

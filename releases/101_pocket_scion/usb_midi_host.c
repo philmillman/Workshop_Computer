@@ -62,7 +62,7 @@ typedef struct
   uint8_t bDescriptorType    ; ///< Descriptor Type, must be CS_ENDPOINT
   uint8_t bDescriptorSubType ; ///< Descriptor SubType, must be MS_GENERAL
   uint8_t bNumEmbMIDIJack;   ; ///< Number of embedded MIDI jacks associated with this endpoint
-  uint8_t baAssocJackID[];   ; ///< A list of associated jacks
+  uint8_t baAssocJackID[];    ///< A list of associated jacks
 } midi_cs_desc_endpoint_t;
 
 typedef struct
