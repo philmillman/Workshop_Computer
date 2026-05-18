@@ -32,6 +32,12 @@
 
 #include "usb_midi_host.h"
 #include <stdlib.h>
+
+// rppicomidi driver predates TinyUSB's TUH_EPSIZE_BULK_MPS rename
+#ifndef USBH_EPSIZE_BULK_MAX
+  #define USBH_EPSIZE_BULK_MAX TUH_EPSIZE_BULK_MPS
+#endif
+
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF
 //--------------------------------------------------------------------+

@@ -1,0 +1,7 @@
+name: PlantHolder
+description: >-
+  Pocket Scion companion card — Placeholder (EB) Householder reverb, USB MIDI
+  host/CV, and clock bridge. Named for plant biosonification (Scion) and the
+  pedal's reflection-matrix topology.
+Language: C++
+Version: 0.1.0

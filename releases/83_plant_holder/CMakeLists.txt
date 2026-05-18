@@ -4,47 +4,47 @@ cmake_minimum_required(VERSION 3.13)
 #   cmake -DPICO_SDK_PATH=~/projects/rp2040/pico-sdk-2.1 ..
 include(pico_sdk_import.cmake)
 
-project(pocket_scion C CXX ASM)
+project(plant_holder C CXX ASM)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
-add_executable(pocket_scion)
+add_executable(plant_holder)
 
-target_sources(pocket_scion PUBLIC
-    ${CMAKE_CURRENT_LIST_DIR}/pocket_scion.cpp
+target_sources(plant_holder PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/plant_holder.cpp
     ${CMAKE_CURRENT_LIST_DIR}/usb_midi_host.c
     ${CMAKE_CURRENT_LIST_DIR}/usb_midi_host_app_driver.c
 )
 
-# Include current directory (tusb_config.h, placeholder_spatial.h, etc.)
+# Include current directory (tusb_config.h, placeholder_reverb.h, etc.)
 # and ComputerCard library directory.
-target_include_directories(pocket_scion PUBLIC
+target_include_directories(plant_holder PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard
 )
 
 # Avoid startup timing problems
-target_compile_definitions(pocket_scion PUBLIC
+target_compile_definitions(plant_holder PUBLIC
     PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
 )
 
-target_compile_definitions(pocket_scion PRIVATE
+target_compile_definitions(plant_holder PRIVATE
     PICO_DEFAULT_UART_BAUD_RATE=115200
 )
 
-pico_enable_stdio_uart(pocket_scion 0)
-pico_enable_stdio_usb(pocket_scion 0)
-pico_add_extra_outputs(pocket_scion)
+pico_enable_stdio_uart(plant_holder 0)
+pico_enable_stdio_usb(plant_holder 0)
+pico_add_extra_outputs(plant_holder)
 
-target_compile_options(pocket_scion PRIVATE
+target_compile_options(plant_holder PRIVATE
     -Wdouble-promotion
     -Wfloat-conversion
     -Wall
     -Wextra
 )
-target_link_options(pocket_scion PRIVATE -Wl,--print-memory-usage)
+target_link_options(plant_holder PRIVATE -Wl,--print-memory-usage)
 
-target_link_libraries(pocket_scion
+target_link_libraries(plant_holder
     tinyusb_host
     tinyusb_board
     pico_unique_id
@@ -55,5 +55,4 @@ target_link_libraries(pocket_scion
     hardware_pwm
     hardware_adc
     hardware_spi
-    hardware_flash
 )
