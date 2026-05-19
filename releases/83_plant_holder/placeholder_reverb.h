@@ -27,6 +27,14 @@ public:
 	static constexpr int32_t TIME_MIN  = 576;   // 12 ms @ 48 kHz
 	static constexpr int32_t TIME_MAX  = 7680;  // 160 ms
 
+	// One-pole LP coefficient for ~500 Hz pivot (EB TONE spec)
+	static constexpr int32_t TONE_LP_K = 30720;
+
+	void __not_in_flash_func(resetToneFilter)()
+	{
+		lpState_ = 0;
+	}
+
 	PlaceholderReverb()
 	{
 		memset(buf_, 0, sizeof(buf_));
@@ -151,8 +159,11 @@ public:
 		hpState_ = hpIn;
 
 		int32_t wetCore = (d[0] + d[1] + d[2]) / 3;
-		int32_t wet     = applyTone(wetCore);
-		int32_t global  = (applyTone(wetCore) * decay_) >> 15;
+		int32_t toned   = applyTone(wetCore);
+		int32_t wet     = toned;
+		// In-phase path: pre-tone sum keeps feedback stable; tone shapes the
+		// audible wet output (pedal TONE is shelving, not a full-band swap).
+		int32_t global  = (wetCore * decay_) >> 16;
 
 		int32_t fb[3];
 		fb[0] = (((d[1] + d[2]) >> 1) * decay_) >> 15;
@@ -162,19 +173,12 @@ public:
 		for (int i = 0; i < 3; ++i)
 		{
 			int32_t w = hpIn + fb[i] + global;
-			if (w >  2047) w =  2047;
-			if (w < -2048) w = -2048;
-			writeDelay(i, (int16_t)w);
+			writeDelay(i, softLimit(w));
 		}
 
 		int32_t width = ((d[0] - d[2]) * spread_) >> 13;
-		outL = wet + width;
-		outR = wet - width;
-
-		if (outL >  2047) outL =  2047;
-		if (outL < -2048) outL = -2048;
-		if (outR >  2047) outR =  2047;
-		if (outR < -2048) outR = -2048;
+		outL = softLimit(wet + width);
+		outR = softLimit(wet - width);
 	}
 
 private:
@@ -255,19 +259,52 @@ private:
 		writePos_[line] = (writePos_[line] + 1) & BUF_MASK;
 	}
 
+	static int16_t __not_in_flash_func(softLimit)(int32_t x)
+	{
+		// Gentle saturation before int16 delay storage (avoids hard clip hash)
+		if (x > 2047)
+		{
+			int32_t over = x - 2047;
+			x = 2047 + (over >> 2);
+			if (x > 3071)
+				x = 3071;
+		}
+		else if (x < -2048)
+		{
+			int32_t over = -2048 - x;
+			x = -2048 - (over >> 2);
+			if (x < -3072)
+				x = -3072;
+		}
+		return (int16_t)x;
+	}
+
 	int32_t __not_in_flash_func(applyTone)(int32_t x)
 	{
-		lpState_ = x + ((lpState_ * 32512) >> 15);
+		// ~500 Hz one-pole split (EB: tilt centred at 500 Hz)
+		lpState_ = x + ((lpState_ * TONE_LP_K) >> 15);
 		int32_t lp = lpState_;
 		int32_t hp = x - lp;
 
 		if (tone_ == 0)
 			return x;
 
+		// Shelving tilt: CW cuts lows + boosts highs, CCW the reverse.
+		// Limited to ~±3 dB so extremes stay musical, not full HP/LP swap.
 		int32_t t = tone_;
-		if (t > 0)
-			return x + ((hp * t) >> 12);
-		return x + ((lp * t) >> 12);
+		int32_t gLo = 4096 - (t >> 2);
+		int32_t gHi = 4096 + (t >> 2);
+		if (gLo < 2048)
+			gLo = 2048;
+		if (gHi > 6144)
+			gHi = 6144;
+
+		int32_t out = ((lp * gLo) + (hp * gHi)) >> 13;
+		if (out > 2047)
+			out = 2047;
+		if (out < -2048)
+			out = -2048;
+		return out;
 	}
 
 	int16_t  buf_[3][BUF_SIZE];

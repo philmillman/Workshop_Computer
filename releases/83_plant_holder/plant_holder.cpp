@@ -75,6 +75,46 @@ static constexpr int32_t BEND_MV_PER_UNIT_DEN = 8192;
 // CV In smoothing: IIR coefficient ≈ (127/128) for ~100 Hz LPF at 48 kHz
 static constexpr int32_t CV_SMOOTH_COEFF = 127;
 
+// Knob → DSP smoothing (~3 ms at 48 kHz) to avoid zipper when a knob catches
+static constexpr int PARAM_SMOOTH_SHIFT = 6;
+
+// Knob pickup: ignore X/Y/Main until the physical knob nears the stored value
+struct KnobPickup
+{
+    int32_t value     = 0;
+    bool    picked_up = false;
+    static constexpr int32_t THRESHOLD = 80;
+
+    int32_t update(int32_t knob_val)
+    {
+        if (picked_up)
+        {
+            value = knob_val;
+        }
+        else
+        {
+            int32_t diff = knob_val - value;
+            if (diff < 0)
+                diff = -diff;
+            if (diff < THRESHOLD)
+            {
+                picked_up = true;
+                value     = knob_val;
+            }
+        }
+        return value;
+    }
+
+    void release() { picked_up = false; }
+};
+
+enum class CtrlPage : uint8_t
+{
+    Up,
+    Mid,
+    Mod,
+};
+
 // ---------------------------------------------------------------------------
 // Shared volatile state (written by Core 1 USB task, read by Core 0 audio)
 // ---------------------------------------------------------------------------
@@ -128,6 +168,28 @@ public:
         modTypeKnob_      = 2048;
         modLpKnob_        = 4095;
         mixLevel_         = 2048;
+        ctrlPage_           = CtrlPage::Up;
+        modPageLatchedPrev_ = false;
+        controlsPrimed_     = false;
+        smoothTime_       = sizeSamples_;
+        smoothDecay_      = decay_;
+        smoothTone_       = tone_;
+        smoothRatio_      = ratio_;
+
+        {
+            const int32_t span = PlaceholderReverb::TIME_MAX
+                               - PlaceholderReverb::TIME_MIN;
+            knobSize_.value     = span > 0
+                ? ((sizeSamples_ - PlaceholderReverb::TIME_MIN) << 12) / span
+                : 2048;
+            knobRatio_.value    = (ratio_ + 4096) >> 1;
+            knobDecay_.value    = (decay_ * 4096) / 31130;
+            knobTone_.value     = (tone_ + 4096) >> 1;
+            knobMix_.value      = mixLevel_;
+            knobModDepth_.value = modDepth_;
+            knobModType_.value  = modTypeKnob_;
+            knobModLp_.value    = modLpKnob_;
+        }
 
         // Start Core 1 for USB MIDI host
         multicore_launch_core1(core1Entry);
@@ -173,32 +235,35 @@ protected:
         // -----------------------------------------------------------------
         // 3. Knobs → FX parameters (page depends on switch / MOD latch)
         // -----------------------------------------------------------------
-        int32_t mainKnob = KnobVal(Main);
-        int32_t xKnob    = KnobVal(X);
-        int32_t yKnob    = KnobVal(Y);
-        Switch  sw       = SwitchVal();
+        Switch sw = SwitchVal();
+        primeControlsIfNeeded(sw);
+        updateCtrlPagePickups(sw);
 
         if (modPageLatched_)
         {
-            modDepth_    = mainKnob;
-            modTypeKnob_ = xKnob;
-            modLpKnob_   = yKnob;
+            modDepth_    = knobModDepth_.update(KnobVal(Main));
+            modTypeKnob_ = knobModType_.update(KnobVal(X));
+            modLpKnob_   = knobModLp_.update(KnobVal(Y));
         }
         else
         {
-            mixLevel_ = mainKnob;
+            mixLevel_ = knobMix_.update(KnobVal(Main));
             if (sw == Switch::Up)
             {
-                int32_t span = PlaceholderReverb::TIME_MAX
-                             - PlaceholderReverb::TIME_MIN;
+                int32_t xKnob = knobSize_.update(KnobVal(X));
+                int32_t yKnob = knobRatio_.update(KnobVal(Y));
+                int32_t span  = PlaceholderReverb::TIME_MAX
+                              - PlaceholderReverb::TIME_MIN;
                 sizeSamples_ = PlaceholderReverb::TIME_MIN
                              + ((xKnob * span) >> 12);
                 ratio_ = (yKnob * 2) - 4096;
             }
             else
             {
+                int32_t xKnob = knobDecay_.update(KnobVal(X));
+                int32_t yKnob = knobTone_.update(KnobVal(Y));
                 decay_ = (xKnob * 31130) >> 12;
-                tone_  = (yKnob * 2) - 4096;
+                tone_  = toneFromKnob(yKnob);
             }
         }
 
@@ -206,7 +271,8 @@ protected:
         int32_t dryLevel = 4095 - mixLevel_;
 
         // CV In 2 → SIZE (0–5 V unipolar-style: add up to full span)
-        int32_t timeSamples = sizeSamples_ + ((cv2Smoothed_ + 2048) * 3) >> 2;
+        int32_t timeSamples = sizeSamples_
+                            + (((cv2Smoothed_ + 2048) * 3) >> 2);
         if (timeSamples < PlaceholderReverb::TIME_MIN)
             timeSamples = PlaceholderReverb::TIME_MIN;
         if (timeSamples > PlaceholderReverb::TIME_MAX)
@@ -223,12 +289,17 @@ protected:
         serviceExternalClock();
 
         // -----------------------------------------------------------------
-        // 5. Placeholder EB feedback delay network
+        // 5. Placeholder EB feedback delay network (smoothed targets)
         // -----------------------------------------------------------------
-        reverb_.setTime(timeSamples);
-        reverb_.setRatio(ratio_);
-        reverb_.setFeedback(decayLevel);
-        reverb_.setTone(tone_);
+        smoothToward(smoothTime_, timeSamples);
+        smoothToward(smoothDecay_, decayLevel);
+        smoothToward(smoothTone_, tone_);
+        smoothToward(smoothRatio_, ratio_);
+
+        reverb_.setTime(smoothTime_);
+        reverb_.setRatio(smoothRatio_);
+        reverb_.setFeedback(smoothDecay_);
+        reverb_.setTone(smoothTone_);
         reverb_.setModDepth(modDepth_);
         reverb_.setModType(modTypeKnob_);
         reverb_.setModLpCutoff(modLpKnob_);
@@ -240,8 +311,8 @@ protected:
         int32_t outL = ((inL * dryLevel) + (wetL * wetLevel)) >> 12;
         int32_t outR = ((inR * dryLevel) + (wetR * wetLevel)) >> 12;
 
-        AudioOut1((int16_t)outL);
-        AudioOut2((int16_t)outR);
+        AudioOut1(clampAudio(outL));
+        AudioOut2(clampAudio(outR));
 
         // -----------------------------------------------------------------
         // 6. CV / Gate outputs from MIDI state
@@ -274,6 +345,91 @@ protected:
     }
 
 private:
+    static int16_t __not_in_flash_func(clampAudio)(int32_t x)
+    {
+        if (x > 2047)
+            return 2047;
+        if (x < -2048)
+            return -2048;
+        return (int16_t)x;
+    }
+
+    static void __not_in_flash_func(smoothToward)(int32_t &state, int32_t target)
+    {
+        state += (target - state) >> PARAM_SMOOTH_SHIFT;
+    }
+
+    CtrlPage __not_in_flash_func(ctrlPageFor)(Switch sw) const
+    {
+        if (modPageLatched_)
+            return CtrlPage::Mod;
+        if (sw == Switch::Up)
+            return CtrlPage::Up;
+        return CtrlPage::Mid;
+    }
+
+    static int32_t __not_in_flash_func(toneFromKnob)(int32_t yKnob)
+    {
+        int32_t t = (yKnob * 2) - 4096;
+        // Noon detent — ignore ADC wander around centre
+        if (t > -200 && t < 200)
+            t = 0;
+        return t;
+    }
+
+    void __not_in_flash_func(primeControlsIfNeeded)(Switch sw)
+    {
+        if (controlsPrimed_)
+            return;
+        controlsPrimed_ = true;
+        ctrlPage_       = ctrlPageFor(sw);
+        releasePickupsFor(ctrlPage_);
+        reverb_.resetToneFilter();
+    }
+
+    void __not_in_flash_func(releasePickupsFor)(CtrlPage page)
+    {
+        switch (page)
+        {
+        case CtrlPage::Up:
+            knobSize_.release();
+            knobRatio_.release();
+            break;
+        case CtrlPage::Mid:
+            knobDecay_.release();
+            knobTone_.release();
+            reverb_.resetToneFilter();
+            break;
+        case CtrlPage::Mod:
+            knobModDepth_.release();
+            knobModType_.release();
+            knobModLp_.release();
+            break;
+        }
+    }
+
+    void __not_in_flash_func(updateCtrlPagePickups)(Switch sw)
+    {
+        const CtrlPage page = ctrlPageFor(sw);
+
+        if (modPageLatched_ != modPageLatchedPrev_)
+        {
+            releasePickupsFor(page);
+            knobMix_.release();
+            modPageLatchedPrev_ = modPageLatched_;
+            ctrlPage_           = page;
+            return;
+        }
+
+        if (page != ctrlPage_)
+        {
+            releasePickupsFor(page);
+            if (page == CtrlPage::Mod || ctrlPage_ == CtrlPage::Mod)
+                knobMix_.release();
+            ctrlPage_ = page;
+        }
+    }
+
     void __not_in_flash_func(serviceExternalClock)()
     {
         if (PulseIn1RisingEdge())
@@ -403,6 +559,24 @@ private:
     int32_t  modTypeKnob_;
     int32_t  modLpKnob_;
     int32_t  mixLevel_;
+
+    CtrlPage ctrlPage_;
+    bool     modPageLatchedPrev_;
+    bool     controlsPrimed_;
+
+    int32_t  smoothTime_;
+    int32_t  smoothDecay_;
+    int32_t  smoothTone_;
+    int32_t  smoothRatio_;
+
+    KnobPickup knobMix_;
+    KnobPickup knobSize_;
+    KnobPickup knobRatio_;
+    KnobPickup knobDecay_;
+    KnobPickup knobTone_;
+    KnobPickup knobModDepth_;
+    KnobPickup knobModType_;
+    KnobPickup knobModLp_;
 };
 
 // ---------------------------------------------------------------------------
