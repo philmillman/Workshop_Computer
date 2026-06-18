@@ -17,7 +17,7 @@ As described below, clock speeds that are are multiples of 48MHz minimise noise 
 ```
 ```
 	vreg_set_voltage(VREG_VOLTAGE_1_20); // overclock, not officially supported
-	set_sys_clock_khz(240000, true);     // but appears to work on multiple devices at 1.2V
+	set_sys_clock_khz(240000, true);     // Works on some (but not all) Computers
 ```
 
 at the start of `main()`, which requires the headers

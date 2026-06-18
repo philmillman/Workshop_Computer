@@ -1,0 +1,13 @@
+#
+#  info.yaml
+#  
+#
+#  Created by Adrian Vos on 16/05/2026.
+#
+
+
+Description: MIDI-clockable generative rhythm and melody organism inspired by Pet Rock
+Language: C++
+Creator: Adrian Vos with Vibecode support
+Version: 1.0
+Status: Beta. USB MIDI clock input and sequencer note output tested

@@ -1,0 +1,6 @@
+Description: "Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize"
+Language: "C++ (Pico SDK)"
+Creator: "Joep Vermaat"
+Version: "1.1"
+Status: Released
+Repository: https://codeberg.org/johantv/voices-of-sid
