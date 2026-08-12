@@ -1,0 +1,135 @@
+draft: true
+Name: CoWork
+short-description: Dual-module sample sequencer — two linked Computers play MIDI-file songs through your own sounds
+summary: >-
+  CoWork turns one or two Workshop Computers into a sample groovebox driven
+  by your own MIDI files and sounds. One module plays melodic parts (pitched
+  lead and bass with v/oct and gate outputs), the other percussive parts (a
+  16-pad drum kit with trigger outputs). Link the two front-panel USB ports
+  and one module leads, sending MIDI clock and transport, while the other
+  follows sample-locked — or sync the follower to any DAW's USB MIDI clock.
+  Songs and samples are prepared and uploaded from a browser-based manager
+  over USB. Works on 2 MB cards, shines on 16 MB.
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Phil Millman
+Version: "0.1.0"
+Status: WIP
+License: MIT
+date-created: 2026-08-12
+date-updated: 2026-08-12
+repository: https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/121_CoWork
+
+contact:
+  email: phil@dmno.dev
+
+tags: [sequencer, sampler, drum-machine, midi, usb, sync, web-editor, dual-module]
+
+Editor: web
+web-entry: cowork.html
+
+uf2:
+  - path: UF2/cowork.uf2
+    name: CoWork v0.1.0 (2 MB and 16 MB cards)
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Reserved
+      type: audio
+      description: Reserved for future FX processing
+    - id: CVIn1
+      name: CV Forward 1
+      type: cv
+      description: Forwarded to the linked module over USB as 14-bit MIDI CC; the peer can route it to its own CV outputs
+    - id: CVIn2
+      name: CV Forward 2
+      type: cv
+      description: Forwarded to the linked module over USB as 14-bit MIDI CC
+    - id: PulseIn1
+      name: Trigger Forward 1
+      type: pulse
+      description: Edges forwarded to the linked module as MIDI notes; the peer can route them to its pulse outputs
+    - id: PulseIn2
+      name: Trigger Forward 2
+      type: pulse
+      description: Edges forwarded to the linked module as MIDI notes
+  outputs:
+    - id: AudioOut1
+      name: Lead / Kit Mix
+      type: audio
+      description: Melodic mode - lead instrument mix; percussive mode - full drum kit mix
+    - id: AudioOut2
+      name: Bass / Submix
+      type: audio
+      description: Melodic mode - bass instrument mix; percussive mode - configurable lane submix (default kick)
+    - id: CVOut1
+      name: Lead v/oct / Accent
+      type: cv
+      description: Melodic mode - calibrated v/oct of the lead part; percussive mode - accent (last-hit velocity)
+    - id: CVOut2
+      name: Bass v/oct / Velocity
+      type: cv
+      description: Melodic mode - calibrated v/oct of the bass part; percussive mode - velocity CV of a chosen drum lane
+    - id: PulseOut1
+      name: Lead Gate / Kick Trig
+      type: pulse
+      description: Melodic mode - lead gate; percussive mode - 10 ms trigger from a configurable lane (default kick)
+    - id: PulseOut2
+      name: Bass Gate / Snare Trig
+      type: pulse
+      description: Melodic mode - bass gate; percussive mode - 10 ms trigger from a configurable lane (default snare)
+
+controls:
+  switch:
+    up:
+      name: Leader (at boot)
+      description: Power up with the switch up to make this module the clock leader — it sends MIDI clock, start and stop over the USB link
+    middle:
+      name: Follower (at boot)
+      description: Power up with the switch in the middle to follow received MIDI clock from the linked module or any DAW
+    down:
+      name: Engine Toggle (hold)
+      description: Hold about one second to toggle between the melodic engine (lead + bass) and the percussive engine (drum kit)
+    tap:
+      name: Transport
+      description: Short press starts or stops the transport (leader), or starts the internal clock on a follower with no clock source
+  knobs:
+    - main:
+        name: Master Volume
+        description: Output level for both audio outputs
+      x:
+        name: Tempo
+        description: 40-240 BPM with pickup — the song's own tempo map applies until the knob is moved (leader); sets the internal fallback tempo on a follower
+      y:
+        name: Song Select
+        description: Chooses the song slot; while running the change lands at the loop point
+  leds:
+    - display: list
+      items:
+        - id: led0
+          name: Role
+          description: Solid = leader; slow blink = follower locked; fast blink = follower waiting for clock; double-blink = both modules are set to leader
+        - id: led1
+          name: Link
+          description: On when the USB MIDI link (module or DAW) is up; flickers during web-manager uploads
+        - id: led2
+          name: Engine
+          description: Off = melodic, on = percussive
+        - id: led3
+          name: Transport
+          description: On while running
+        - id: led4
+          name: Beat
+          description: Pulses each quarter note, brighter on the downbeat
+        - id: led5
+          name: Activity
+          description: Brightness follows voice activity; latches solid if the audio callback ever overruns (debug aid)
+
+host:
+  notes: |
+    The web manager (Chromium browsers, Web Serial) uploads MIDI files and
+    samples and edits configuration. Connect the module directly to the
+    computer — the module-to-module link uses the same USB port, so unplug
+    the other Computer first. USB host mode (needed on ONE side of a
+    two-module link) requires a 2025 rev 1.1 Computer; the USB port role
+    settles when power is first applied, so re-cable then power-cycle.

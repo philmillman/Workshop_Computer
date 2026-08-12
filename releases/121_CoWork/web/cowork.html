@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoWork Manager</title>
+<style>
+:root {
+  --bg: #14161a; --panel: #1d2127; --panel2: #23282f; --edge: #333a43;
+  --text: #d8dce2; --dim: #8a93a0; --acc: #58a6ff; --ok: #4ec97a;
+  --warn: #e8b34a; --err: #e06060; --mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 18px;
+  background: var(--panel); border-bottom: 1px solid var(--edge);
+  position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; }
+header .sub { color: var(--dim); font-size: 12px; }
+main { max-width: 1080px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+section { background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 10px; padding: 14px 16px; }
+section h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--dim); }
+button { background: var(--panel2); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+button:hover { border-color: var(--acc); }
+button.primary { background: var(--acc); color: #08131f; border-color: var(--acc); font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+select, input[type=text], input[type=number] { background: var(--panel2);
+  color: var(--text); border: 1px solid var(--edge); border-radius: 6px; padding: 5px 8px; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; border: 1px solid var(--edge); color: var(--dim); }
+.pill.on { color: var(--ok); border-color: var(--ok); }
+.pill.err { color: var(--err); border-color: var(--err); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; gap: 10px; }
+.songs { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.kit { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.cell { background: var(--panel2); border: 1px solid var(--edge);
+  border-radius: 8px; padding: 10px; }
+.cell.drop { border-style: dashed; }
+.cell.dragover { border-color: var(--acc); background: #253040; }
+.cell h3 { margin: 0 0 6px; font-size: 13px; }
+.cell .meta { color: var(--dim); font-size: 12px; }
+.cell.dirty { border-color: var(--warn); }
+.instr { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+canvas.wave { width: 100%; height: 46px; background: #171a1f;
+  border-radius: 4px; display: block; margin: 6px 0; }
+#log { font-family: var(--mono); font-size: 11px; color: var(--dim);
+  max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+  background: #101215; border-radius: 6px; padding: 8px; }
+.bar { height: 8px; background: #10161d; border-radius: 4px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--acc); width: 0%; transition: width .1s; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); }
+th { color: var(--dim); font-weight: 500; }
+label.cfg { display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; padding: 3px 0; }
+.cfggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 24px; }
+.hint { color: var(--dim); font-size: 12px; }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 10px; max-width: 640px; width: 90%; }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CoWork Manager</h1>
+  <span class="sub">songs &amp; sounds for the dual-module sample sequencer</span>
+  <span style="flex:1"></span>
+  <span id="connState" class="pill">disconnected</span>
+  <button id="btnConnect" class="primary">Connect</button>
+  <button id="btnMock" title="Explore the UI against a simulated card">Mock mode</button>
+</header>
+
+<main>
+  <section id="statusPanel" hidden>
+    <h2>Card</h2>
+    <div class="row">
+      <span class="pill" id="stFlash">–</span>
+      <span class="pill" id="stRole">–</span>
+      <span class="pill" id="stMode">–</span>
+      <span class="pill" id="stPlaying">–</span>
+      <span class="pill" id="stBpm">–</span>
+      <span class="pill" id="stLinked">–</span>
+      <span style="flex:1"></span>
+      <button id="btnPlay">Play</button>
+      <button id="btnStop">Stop</button>
+      <button id="btnRefresh">Refresh</button>
+    </div>
+    <div style="margin-top:10px">
+      <div class="row" style="justify-content:space-between">
+        <span class="hint">Sample storage</span><span class="hint" id="stUsage">–</span>
+      </div>
+      <div class="bar"><div id="usageBar"></div></div>
+    </div>
+  </section>
+
+  <section id="songsPanel" hidden>
+    <h2>Songs <span class="hint">— drop a .mid file on a slot</span></h2>
+    <div class="grid songs" id="songGrid"></div>
+  </section>
+
+  <section id="instrPanel" hidden>
+    <h2>Instruments <span class="hint">(melodic mode) — drop an audio file</span></h2>
+    <div class="instr" id="instrGrid"></div>
+  </section>
+
+  <section id="kitPanel" hidden>
+    <h2>Drum kit <span class="hint">(percussive mode) — drop audio files on pads</span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <button id="btnGmReset">Reset note map to GM</button>
+    </div>
+    <div class="grid kit" id="kitGrid"></div>
+  </section>
+
+  <section id="configPanel" hidden>
+    <h2>Configuration <span class="hint">— applies live; saved on the card when stopped</span></h2>
+    <div class="cfggrid" id="cfgGrid"></div>
+  </section>
+
+  <section id="applyPanel" hidden>
+    <h2>Apply changes</h2>
+    <div class="row">
+      <span id="applySummary" class="hint">No staged changes.</span>
+      <span style="flex:1"></span>
+      <button id="btnApply" class="primary" disabled>Apply to card</button>
+    </div>
+    <div class="bar" style="margin-top:8px"><div id="applyBar"></div></div>
+    <div class="hint" id="applyDetail"></div>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<dialog id="midiDialog">
+  <h3 style="margin-top:0">Import MIDI file</h3>
+  <div id="midiInfo" class="hint"></div>
+  <table id="midiTable"></table>
+  <div class="hint" id="midiPreview" style="margin:8px 0"></div>
+  <div class="row" style="justify-content:flex-end; margin-top:10px">
+    <button id="midiCancel">Cancel</button>
+    <button id="midiOk" class="primary">Stage to slot</button>
+  </div>
+</dialog>
+
+<script id="cowork-core">
+"use strict";
+// ============================================================================
+// CoWorkCore — pure logic shared with the node test harness. Everything in
+// this block must run without a DOM. The byte formats implemented here are
+// specified in docs/FORMATS.md; the firmware implements the same contract.
+// ============================================================================
+const CoWorkCore = (() => {
+
+const PPQN = 96;
+const SEQ_MAGIC = 0x51535743;   // "CWSQ"
+const BANK_MAGIC = 0x42535743;  // "CWSB"
+const CFG_MAGIC = 0x46435743;   // "CWCF"
+const BANK_SLOTS = 18;
+const NUM_LANES = 16;
+const SAMPLE_RATE = 24000;
+const SECTOR = 4096;
+const SONG_SLOT_BYTES = 65536;
+const MAX_EVENTS = Math.floor((SONG_SLOT_BYTES - 64) / 8);
+const CONFIG_BYTES = 128;
+
+// ---------------------------------------------------------------- CRC32
+const crcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++)
+    c = crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ---------------------------------------------------------------- helpers
+function u32le(v) {
+  return Uint8Array.of(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF);
+}
+function readU32(bytes, off) {
+  return (bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) |
+          (bytes[off + 3] << 24)) >>> 0;
+}
+function readU16(bytes, off) { return bytes[off] | (bytes[off + 1] << 8); }
+function writeU16(bytes, off, v) { bytes[off] = v & 0xFF; bytes[off + 1] = (v >>> 8) & 0xFF; }
+function writeU32(bytes, off, v) {
+  bytes[off] = v & 0xFF; bytes[off + 1] = (v >>> 8) & 0xFF;
+  bytes[off + 2] = (v >>> 16) & 0xFF; bytes[off + 3] = (v >>> 24) & 0xFF;
+}
+function writeName(bytes, off, len, str) {
+  for (let i = 0; i < len; i++) bytes[off + i] = 0;
+  const enc = new TextEncoder().encode(str || "");
+  for (let i = 0; i < Math.min(len, enc.length); i++) bytes[off + i] = enc[i];
+}
+function readName(bytes, off, len) {
+  let end = off;
+  while (end < off + len && bytes[end] !== 0) end++;
+  return new TextDecoder().decode(bytes.slice(off, end));
+}
+
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function noteName(n) { return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1); }
+
+// ---------------------------------------------------------------- flash map
+// Mirrors src/storage/FlashMap.h — used by MockDevice and for sanity checks;
+// the real card publishes its map via the I command.
+function computeMap(flashBytes) {
+  const configOff = 0x040000;
+  const songsOff = configOff + SECTOR;
+  const songSlots = flashBytes >= 8 * 1024 * 1024 ? 8 : 4;
+  const bankOff = songsOff + songSlots * SONG_SLOT_BYTES;
+  return {
+    flash: flashBytes,
+    config: { off: configOff, len: SECTOR },
+    songs: { off: songsOff, slotLen: SONG_SLOT_BYTES, slots: songSlots },
+    samples: { off: bankOff, dataOff: bankOff + SECTOR, end: flashBytes },
+  };
+}
+
+// ---------------------------------------------------------------- SMF parser
+function parseSMF(bytes) {
+  if (bytes.length < 14) throw new Error("Not a MIDI file (too short)");
+  let p = 0;
+  const str4 = () => String.fromCharCode(bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
+  if (str4() !== "MThd") throw new Error("Not a MIDI file (no MThd)");
+  p += 4;
+  const hlen = readU32be(); const format = readU16be(); const ntrks = readU16be();
+  const division = readU16be();
+  p += hlen - 6;
+  if (format === 2) throw new Error("SMF format 2 is not supported");
+  if (division & 0x8000) throw new Error("SMPTE time division is not supported");
+  if (division === 0) throw new Error("Invalid time division");
+
+  function readU32be() { const v = (bytes[p] << 24) | (bytes[p+1] << 16) | (bytes[p+2] << 8) | bytes[p+3]; p += 4; return v >>> 0; }
+  function readU16be() { const v = (bytes[p] << 8) | bytes[p+1]; p += 2; return v; }
+  function readVarLen(end) {
+    let v = 0;
+    for (let i = 0; i < 4 && p < end; i++) {
+      const b = bytes[p++];
+      v = (v << 7) | (b & 0x7F);
+      if (!(b & 0x80)) return v;
+    }
+    return v;
+  }
+
+  const tracks = [];
+  const warnings = [];
+  for (let t = 0; t < ntrks && p + 8 <= bytes.length; t++) {
+    if (str4() !== "MTrk") { warnings.push(`Track ${t}: bad chunk id, stopping`); break; }
+    p += 4;
+    const len = readU32be();
+    const end = Math.min(p + len, bytes.length);
+    const track = { name: "", events: [], channels: new Set(), noteCount: 0,
+                    pitchSum: 0, minNote: 127, maxNote: 0 };
+    let tick = 0;
+    let running = 0;
+    while (p < end) {
+      tick += readVarLen(end);
+      let status = bytes[p];
+      if (status & 0x80) { p++; if (status < 0xF0) running = status; }
+      else { status = running; if (!status) { p++; continue; } }
+
+      if (status === 0xFF) {
+        const type = bytes[p++];
+        const mlen = readVarLen(end);
+        if (type === 0x51 && mlen === 3) {
+          const uspq = (bytes[p] << 16) | (bytes[p + 1] << 8) | bytes[p + 2];
+          track.events.push({ tick, kind: "tempo", uspq });
+        } else if (type === 0x58 && mlen >= 2) {
+          track.events.push({ tick, kind: "tsig", num: bytes[p], denomLog2: bytes[p + 1] });
+        } else if (type === 0x03) {
+          track.name = new TextDecoder().decode(bytes.slice(p, p + mlen));
+        }
+        p += mlen;
+        if (type === 0x2F) break;
+        continue;
+      }
+      if (status === 0xF0 || status === 0xF7) { const slen = readVarLen(end); p += slen; continue; }
+
+      const hi = status & 0xF0;
+      const ch = status & 0x0F;
+      const d1 = bytes[p++] & 0x7F;
+      let d2 = 0;
+      if (hi !== 0xC0 && hi !== 0xD0) d2 = bytes[p++] & 0x7F;
+
+      if (hi === 0x90 && d2 > 0) {
+        track.events.push({ tick, kind: "on", ch, note: d1, vel: d2 });
+        track.channels.add(ch);
+        track.noteCount++;
+        track.pitchSum += d1;
+        track.minNote = Math.min(track.minNote, d1);
+        track.maxNote = Math.max(track.maxNote, d1);
+      } else if (hi === 0x80 || (hi === 0x90 && d2 === 0)) {
+        track.events.push({ tick, kind: "off", ch, note: d1 });
+      }
+      // CC / bend / aftertouch / program: dropped in v1
+    }
+    p = end;
+    tracks.push(track);
+  }
+  return { format, division, tracks, warnings };
+}
+
+// Channel usage summary for the mapping UI
+function smfChannelSummary(parsed) {
+  const chans = new Map();
+  for (const tr of parsed.tracks)
+    for (const ev of tr.events) {
+      if (ev.kind !== "on") continue;
+      let c = chans.get(ev.ch);
+      if (!c) { c = { ch: ev.ch, notes: 0, pitchSum: 0, min: 127, max: 0, trackNames: new Set() }; chans.set(ev.ch, c); }
+      c.notes++; c.pitchSum += ev.note;
+      c.min = Math.min(c.min, ev.note); c.max = Math.max(c.max, ev.note);
+      if (tr.name) c.trackNames.add(tr.name);
+    }
+  const list = [...chans.values()].sort((a, b) => a.ch - b.ch);
+  for (const c of list) c.avg = c.notes ? c.pitchSum / c.notes : 0;
+  return list;
+}
+
+// Auto-suggest channel -> part: ch10 drums, lowest avg pitch bass, densest lead
+function suggestChannelMap(summary) {
+  const map = {};
+  for (const c of summary) map[c.ch] = -1;
+  const melodic = summary.filter(c => c.ch !== 9);
+  for (const c of summary) if (c.ch === 9) map[9] = 2;
+  if (melodic.length) {
+    const byPitch = [...melodic].sort((a, b) => a.avg - b.avg);
+    const bass = byPitch[0];
+    const rest = melodic.filter(c => c !== bass);
+    const lead = rest.sort((a, b) => b.notes - a.notes)[0];
+    if (lead) map[lead.ch] = 0;
+    if (rest.length || !lead) map[bass.ch] = 1;
+    else map[bass.ch] = 0; // only one melodic channel: make it the lead
+  }
+  return map;
+}
+
+// Convert a parsed SMF + channel->part map into CWSQ fields.
+// channelMap: {ch: 0|1|2|-1}. Returns {events, lengthTicks, tempoUspq, tsig, stats}.
+function convertSMF(parsed, channelMap, opts = {}) {
+  const scale = PPQN / parsed.division;
+  const raw = [];
+  let tsig = { num: 4, denomLog2: 2 };
+  let sawTsig = false;
+
+  for (const tr of parsed.tracks) {
+    for (const ev of tr.events) {
+      const tick = Math.round(ev.tick * scale);
+      if (ev.kind === "tempo") raw.push({ tick, type: 2, uspq: ev.uspq });
+      else if (ev.kind === "tsig") { if (!sawTsig) { tsig = { num: ev.num, denomLog2: ev.denomLog2 }; sawTsig = true; } }
+      else if (ev.kind === "on" || ev.kind === "off") {
+        const part = channelMap[ev.ch];
+        if (part === undefined || part < 0) continue;
+        raw.push({ tick, type: ev.kind === "on" ? 1 : 0, part, note: ev.note, vel: ev.vel || 0 });
+      }
+    }
+  }
+
+  // Sort: tick, then TEMPO(2) -> OFF(0) -> ON(1)
+  const order = { 2: 0, 0: 1, 1: 2 };
+  raw.sort((a, b) => a.tick - b.tick || order[a.type] - order[b.type]);
+
+  // Pair notes; repair overlaps; enforce min 1-tick length
+  const active = new Map(); // key part<<8|note -> [onTick,...] FIFO
+  const out = [];
+  let lastTempo = -1;
+  for (const ev of raw) {
+    if (ev.type === 2) {
+      if (ev.uspq !== lastTempo) { out.push(ev); lastTempo = ev.uspq; }
+      continue;
+    }
+    const key = (ev.part << 8) | ev.note;
+    if (ev.type === 1) {
+      if (active.has(key) && active.get(key).length > 0) {
+        // Overlapping same-pitch note: retrigger
+        out.push({ tick: ev.tick, type: 0, part: ev.part, note: ev.note, vel: 0 });
+        active.get(key).shift();
+      }
+      out.push(ev);
+      if (!active.has(key)) active.set(key, []);
+      active.get(key).push(ev.tick);
+    } else {
+      const q = active.get(key);
+      if (!q || q.length === 0) continue; // stray off
+      const onTick = q.shift();
+      out.push({ tick: Math.max(ev.tick, onTick + 1), type: 0, part: ev.part, note: ev.note, vel: 0 });
+    }
+  }
+  let maxTick = 0;
+  for (const ev of out) maxTick = Math.max(maxTick, ev.tick);
+  // Dangling note-ons get an off at the end
+  for (const [key, q] of active)
+    for (const onTick of q)
+      out.push({ tick: Math.max(maxTick, onTick + 1), type: 0,
+                 part: (key >> 8) & 0xFF, note: key & 0xFF, vel: 0 });
+  for (const ev of out) maxTick = Math.max(maxTick, ev.tick);
+
+  // Re-sort after repairs (off ticks may have moved)
+  out.sort((a, b) => a.tick - b.tick || order[a.type] - order[b.type]);
+
+  // Bar-round the length
+  const ticksPerBar = Math.max(1, Math.round(tsig.num * PPQN * 4 / (1 << tsig.denomLog2)));
+  const lengthTicks = Math.max(ticksPerBar, Math.ceil(maxTick / ticksPerBar) * ticksPerBar);
+
+  const firstTempo = out.find(e => e.type === 2 && e.tick === 0);
+  const tempoUspq = opts.tempoUspq || (firstTempo ? firstTempo.uspq : 500000);
+
+  const stats = {
+    events: out.length + 1, // + END sentinel
+    bytes: 64 + (out.length + 1) * 8,
+    bars: lengthTicks / ticksPerBar,
+    tempoChanges: out.filter(e => e.type === 2).length,
+    truncated: false,
+  };
+  if (out.length + 1 > MAX_EVENTS) {
+    out.length = MAX_EVENTS - 1;
+    stats.truncated = true;
+    stats.events = out.length + 1;
+    stats.bytes = 64 + (out.length + 1) * 8;
+  }
+  return { events: out, lengthTicks, tempoUspq, tsig, stats };
+}
+
+// ---------------------------------------------------------------- CWSQ codec
+function encodeSong({ name, events, lengthTicks, loopStart = 0, loopEnd = null,
+                      tempoUspq = 500000, tsig = { num: 4, denomLog2: 2 }, loop = true }) {
+  if (loopEnd === null) loopEnd = lengthTicks;
+  const n = events.length + 1;
+  const evBytes = new Uint8Array(n * 8);
+  let o = 0;
+  const put = (tick, type, b5, b6, b7) => {
+    writeU32(evBytes, o, tick);
+    evBytes[o + 4] = type; evBytes[o + 5] = b5; evBytes[o + 6] = b6; evBytes[o + 7] = b7;
+    o += 8;
+  };
+  for (const ev of events) {
+    if (ev.type === 2)
+      put(ev.tick, 2, (ev.uspq >> 16) & 0xFF, (ev.uspq >> 8) & 0xFF, ev.uspq & 0xFF);
+    else
+      put(ev.tick, ev.type, ev.part, ev.note, ev.type === 1 ? Math.max(1, ev.vel) : 0);
+  }
+  put(lengthTicks, 0x7F, 0, 0, 0); // END sentinel
+
+  const buf = new Uint8Array(64 + evBytes.length);
+  writeU32(buf, 0, SEQ_MAGIC);
+  writeU16(buf, 4, 1);
+  writeU16(buf, 6, loop ? 1 : 0);
+  writeU16(buf, 8, PPQN);
+  buf[10] = tsig.num; buf[11] = tsig.denomLog2;
+  writeU32(buf, 12, tempoUspq);
+  writeU32(buf, 16, lengthTicks);
+  writeU32(buf, 20, loopStart);
+  writeU32(buf, 24, loopEnd);
+  writeU32(buf, 28, n);
+  writeName(buf, 32, 24, name);
+  writeU32(buf, 56, crc32(evBytes));
+  writeU32(buf, 60, 0xFFFFFFFF);
+  buf.set(evBytes, 64);
+  if (buf.length > SONG_SLOT_BYTES) throw new Error("Song exceeds the 64 KB slot");
+  return buf;
+}
+
+function decodeSongHeader(bytes) {
+  if (bytes.length < 64 || readU32(bytes, 0) !== SEQ_MAGIC) return null;
+  return {
+    version: readU16(bytes, 4),
+    flags: readU16(bytes, 6),
+    ppqn: readU16(bytes, 8),
+    tsig: { num: bytes[10], denomLog2: bytes[11] },
+    tempoUspq: readU32(bytes, 12),
+    lengthTicks: readU32(bytes, 16),
+    loopStart: readU32(bytes, 20),
+    loopEnd: readU32(bytes, 24),
+    eventCount: readU32(bytes, 28),
+    name: readName(bytes, 32, 24),
+    eventsCrc: readU32(bytes, 56),
+  };
+}
+
+function decodeSong(bytes) {
+  const h = decodeSongHeader(bytes);
+  if (!h) return null;
+  const events = [];
+  for (let i = 0; i < h.eventCount; i++) {
+    const o = 64 + i * 8;
+    const type = bytes[o + 4];
+    const e = { tick: readU32(bytes, o), type };
+    if (type === 2) e.uspq = (bytes[o + 5] << 16) | (bytes[o + 6] << 8) | bytes[o + 7];
+    else { e.part = bytes[o + 5]; e.note = bytes[o + 6]; e.vel = bytes[o + 7]; }
+    events.push(e);
+  }
+  return { header: h, events };
+}
+
+// ---------------------------------------------------------------- CWSB codec
+const GM_DRUM_MAP = [
+  { name: "Kick", note: 36, choke: 0 },  { name: "Rim", note: 37, choke: 0 },
+  { name: "Snare", note: 38, choke: 0 }, { name: "Clap", note: 39, choke: 0 },
+  { name: "ClHat", note: 42, choke: 1 }, { name: "PdHat", note: 44, choke: 1 },
+  { name: "OpHat", note: 46, choke: 1 }, { name: "LowTom", note: 41, choke: 0 },
+  { name: "MidTom", note: 45, choke: 0 },{ name: "HiTom", note: 48, choke: 0 },
+  { name: "Crash", note: 49, choke: 0 }, { name: "Ride", note: 51, choke: 0 },
+  { name: "Tamb", note: 54, choke: 0 },  { name: "Cowbell", note: 56, choke: 0 },
+  { name: "Shaker", note: 70, choke: 0 },{ name: "Clave", note: 75, choke: 0 },
+];
+
+// slots: 18 entries {name, offset, lengthFrames, root, assignNote, flags, choke, dataCrc}
+// offset 0xFFFFFFFF / lengthFrames 0 = empty.
+function encodeBankDir(slots, dataBytesUsed) {
+  const buf = new Uint8Array(SECTOR).fill(0xFF);
+  const entries = new Uint8Array(BANK_SLOTS * 32);
+  for (let i = 0; i < BANK_SLOTS; i++) {
+    const s = slots[i] || {};
+    const o = i * 32;
+    writeName(entries, o, 12, s.name || "");
+    writeU32(entries, o + 12, s.offset === undefined ? 0xFFFFFFFF : s.offset);
+    writeU32(entries, o + 16, s.lengthFrames || 0);
+    writeU32(entries, o + 20, SAMPLE_RATE);
+    entries[o + 24] = s.root === undefined ? 0xFF : s.root;
+    entries[o + 25] = s.assignNote === undefined ? 0xFF : s.assignNote;
+    entries[o + 26] = s.flags || 0;
+    entries[o + 27] = s.choke || 0;
+    writeU32(entries, o + 28, s.dataCrc || 0);
+  }
+  writeU32(buf, 0, BANK_MAGIC);
+  writeU16(buf, 4, 1);
+  writeU16(buf, 6, BANK_SLOTS);
+  writeU32(buf, 8, SAMPLE_RATE);
+  writeU32(buf, 12, dataBytesUsed || 0);
+  writeU32(buf, 16, crc32(entries));
+  buf.set(entries, 32);
+  return buf;
+}
+
+function decodeBankDir(bytes) {
+  if (bytes.length < SECTOR || readU32(bytes, 0) !== BANK_MAGIC) return null;
+  const slots = [];
+  for (let i = 0; i < BANK_SLOTS; i++) {
+    const o = 32 + i * 32;
+    slots.push({
+      name: readName(bytes, o, 12),
+      offset: readU32(bytes, o + 12),
+      lengthFrames: readU32(bytes, o + 16),
+      sampleRate: readU32(bytes, o + 20),
+      root: bytes[o + 24],
+      assignNote: bytes[o + 25],
+      flags: bytes[o + 26],
+      choke: bytes[o + 27],
+      dataCrc: readU32(bytes, o + 28),
+    });
+  }
+  return { dataBytesUsed: readU32(bytes, 12), dirCrc: readU32(bytes, 16), slots };
+}
+
+// First-fit allocator: keeps slots that already live on the card at their
+// offsets, packs new/changed slots into the gaps. Offsets are relative to
+// the bank base; data starts at SECTOR. Returns null if it doesn't fit.
+function allocateBank(slots, bankBytes) {
+  const fixed = [];
+  for (const s of slots)
+    if (s && s.lengthFrames > 0 && s.offset !== undefined && s.offset !== 0xFFFFFFFF && !s.dirty)
+      fixed.push({ start: s.offset, end: s.offset + Math.ceil(s.lengthFrames * 2 / SECTOR) * SECTOR });
+  fixed.sort((a, b) => a.start - b.start);
+
+  for (const s of slots) {
+    if (!s || !s.dirty || !s.lengthFrames) continue;
+    const need = Math.ceil(s.lengthFrames * 2 / SECTOR) * SECTOR;
+    let at = SECTOR;
+    let placed = false;
+    for (let i = 0; i <= fixed.length; i++) {
+      const gapEnd = i < fixed.length ? fixed[i].start : bankBytes;
+      if (gapEnd - at >= need) {
+        s.offset = at;
+        fixed.splice(i, 0, { start: at, end: at + need });
+        placed = true;
+        break;
+      }
+      if (i < fixed.length) at = Math.max(at, fixed[i].end);
+    }
+    if (!placed) return null;
+  }
+  let used = 0;
+  for (const s of slots)
+    if (s && s.lengthFrames > 0 && s.offset !== 0xFFFFFFFF && s.offset !== undefined)
+      used += Math.ceil(s.lengthFrames * 2 / SECTOR) * SECTOR;
+  return { slots, used };
+}
+
+// ---------------------------------------------------------------- CWCF codec
+function defaultConfig() {
+  const chanMap = new Array(16).fill(0xFF);
+  chanMap[0] = 0; chanMap[1] = 1; chanMap[9] = 2;
+  return {
+    engineMode: 0, activeSong: 0, tempoBpmX10: 1200, swing: 50,
+    outSrcBits: 0, fwdEnable: 0x0F, pulse1Lane: 0, pulse2Lane: 2, cv2Lane: 0,
+    out2LaneMask: 0x0001, releaseLead: 15, releaseBass: 30, masterVol: 200,
+    midiChannelToPart: chanMap,
+  };
+}
+
+function encodeConfig(c) {
+  const buf = new Uint8Array(CONFIG_BYTES).fill(0xFF);
+  writeU32(buf, 0, CFG_MAGIC);
+  writeU16(buf, 4, 1);
+  buf[6] = c.engineMode; buf[7] = c.activeSong;
+  writeU16(buf, 8, c.tempoBpmX10);
+  buf[10] = c.swing; buf[11] = c.outSrcBits; buf[12] = c.fwdEnable;
+  buf[13] = c.pulse1Lane; buf[14] = c.pulse2Lane; buf[15] = c.cv2Lane;
+  writeU16(buf, 16, c.out2LaneMask);
+  buf[18] = c.releaseLead; buf[19] = c.releaseBass; buf[20] = c.masterVol;
+  buf[21] = 0;
+  for (let i = 0; i < 16; i++) buf[22 + i] = c.midiChannelToPart[i];
+  writeU32(buf, 124, crc32(buf.subarray(0, 124)));
+  return buf;
+}
+
+function decodeConfig(bytes) {
+  if (bytes.length !== CONFIG_BYTES || readU32(bytes, 0) !== CFG_MAGIC) return null;
+  const c = {
+    engineMode: bytes[6], activeSong: bytes[7],
+    tempoBpmX10: readU16(bytes, 8), swing: bytes[10],
+    outSrcBits: bytes[11], fwdEnable: bytes[12],
+    pulse1Lane: bytes[13], pulse2Lane: bytes[14], cv2Lane: bytes[15],
+    out2LaneMask: readU16(bytes, 16),
+    releaseLead: bytes[18], releaseBass: bytes[19], masterVol: bytes[20],
+    midiChannelToPart: Array.from(bytes.subarray(22, 38)),
+  };
+  return c;
+}
+
+// ---------------------------------------------------------------- audio utils
+function mixToMono(channels) {
+  if (channels.length === 1) return channels[0];
+  const n = channels[0].length;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (const ch of channels) s += ch[i];
+    out[i] = s / channels.length;
+  }
+  return out;
+}
+
+function normalizePeak(f32, targetDb = -1) {
+  let peak = 0;
+  for (let i = 0; i < f32.length; i++) peak = Math.max(peak, Math.abs(f32[i]));
+  if (peak === 0) return f32;
+  const g = Math.pow(10, targetDb / 20) / peak;
+  const out = new Float32Array(f32.length);
+  for (let i = 0; i < f32.length; i++) out[i] = f32[i] * g;
+  return out;
+}
+
+function trimSilence(f32, threshold = 0.002) {
+  let start = 0, end = f32.length;
+  while (start < end && Math.abs(f32[start]) < threshold) start++;
+  while (end > start && Math.abs(f32[end - 1]) < threshold) end--;
+  // Keep a hair of the attack
+  start = Math.max(0, start - 8);
+  return f32.slice(start, end);
+}
+
+function floatToInt16(f32) {
+  const out = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    let v = Math.round(f32[i] * 32767);
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
+    out[i] = v;
+  }
+  return out;
+}
+
+function int16Bytes(i16) {
+  return new Uint8Array(i16.buffer, i16.byteOffset, i16.length * 2);
+}
+
+// ---------------------------------------------------------------- protocol
+// link = { write(Uint8Array): Promise, reader: ByteReader }
+class ByteReader {
+  constructor() { this.chunks = []; this.len = 0; this.waiter = null; }
+  push(bytes) {
+    if (bytes.length === 0) return;
+    this.chunks.push(bytes);
+    this.len += bytes.length;
+    if (this.waiter) { const w = this.waiter; this.waiter = null; w(); }
+  }
+  clear() { this.chunks = []; this.len = 0; }
+  async _wait(timeoutMs) {
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => { this.waiter = null; rej(new Error("timeout")); }, timeoutMs);
+      this.waiter = () => { clearTimeout(t); res(); };
+    });
+  }
+  async readExact(n, timeoutMs = 4000) {
+    while (this.len < n) await this._wait(timeoutMs);
+    const out = new Uint8Array(n);
+    let o = 0;
+    while (o < n) {
+      const c = this.chunks[0];
+      const take = Math.min(c.length, n - o);
+      out.set(c.subarray(0, take), o);
+      o += take;
+      if (take === c.length) this.chunks.shift();
+      else this.chunks[0] = c.subarray(take);
+      this.len -= take;
+    }
+    return out;
+  }
+  async readLine(timeoutMs = 4000) {
+    const bytes = [];
+    for (;;) {
+      const b = await this.readExact(1, timeoutMs);
+      if (b[0] === 10) return String.fromCharCode(...bytes);
+      bytes.push(b[0]);
+      if (bytes.length > 1024) throw new Error("line too long");
+    }
+  }
+}
+
+class Protocol {
+  constructor(link) { this.link = link; }
+
+  async sync() {
+    this.link.reader.clear();
+    await this.link.write(Uint8Array.of(0x58)); // 'X'
+    const line = await this.link.reader.readLine(1500);
+    if (line !== "SYNC") throw new Error("sync failed: " + line);
+  }
+
+  async info() {
+    await this.link.write(Uint8Array.of(0x49)); // 'I'
+    const len = readU32(await this.link.reader.readExact(4), 0);
+    if (len === 0 || len > 4096) throw new Error("bad info length");
+    const body = await this.link.reader.readExact(len);
+    return JSON.parse(new TextDecoder().decode(body));
+  }
+
+  async read(off, len, onProgress) {
+    const req = new Uint8Array(9);
+    req[0] = 0x52; // 'R'
+    req.set(u32le(off), 1); req.set(u32le(len), 5);
+    await this.link.write(req);
+    const granted = readU32(await this.link.reader.readExact(4), 0);
+    if (granted === 0) throw new Error("read rejected");
+    const out = new Uint8Array(granted);
+    let got = 0;
+    while (got < granted) {
+      const n = Math.min(1024, granted - got);
+      out.set(await this.link.reader.readExact(n, 8000), got);
+      got += n;
+      if (got < granted) await this.link.write(Uint8Array.of(0x41)); // 'A'
+      if (onProgress) onProgress(got, granted);
+    }
+    const crc = readU32(await this.link.reader.readExact(4), 0);
+    const done = await this.link.reader.readLine();
+    if (done !== "DONE") throw new Error("read framing error");
+    if (crc !== crc32(out)) throw new Error("read CRC mismatch");
+    return out;
+  }
+
+  async write(off, bytes, onProgress) {
+    const req = new Uint8Array(13);
+    req[0] = 0x57; // 'W'
+    req.set(u32le(off), 1); req.set(u32le(bytes.length), 5);
+    req.set(u32le(crc32(bytes)), 9);
+    await this.link.write(req);
+    const resp = await this.link.reader.readLine();
+    if (resp !== "OK") throw new Error("write rejected: " + resp);
+    for (let o = 0; o < bytes.length; o += 4096) {
+      await this.link.write(bytes.subarray(o, Math.min(o + 4096, bytes.length)));
+      if (onProgress) onProgress(Math.min(o + 4096, bytes.length), bytes.length);
+      await new Promise(r => setTimeout(r, 0)); // let the UI breathe
+    }
+    const fin = await this.link.reader.readLine(20000);
+    if (fin !== "OK") throw new Error("write failed: " + fin);
+  }
+
+  async erase(off, len) {
+    const req = new Uint8Array(9);
+    req[0] = 0x45; // 'E'
+    req.set(u32le(off), 1); req.set(u32le(len), 5);
+    await this.link.write(req);
+    const resp = await this.link.reader.readLine(30000);
+    if (resp !== "OK") throw new Error("erase failed: " + resp);
+  }
+
+  async getConfig() {
+    await this.link.write(Uint8Array.of(0x47)); // 'G'
+    const len = readU32(await this.link.reader.readExact(4), 0);
+    const body = await this.link.reader.readExact(len);
+    const c = decodeConfig(body);
+    if (!c) throw new Error("bad config blob");
+    return c;
+  }
+
+  async setConfig(cfg) {
+    const blob = encodeConfig(cfg);
+    const msg = new Uint8Array(1 + 4 + blob.length + 4);
+    msg[0] = 0x53; // 'S'
+    msg.set(u32le(blob.length), 1);
+    msg.set(blob, 5);
+    msg.set(u32le(crc32(blob)), 5 + blob.length);
+    await this.link.write(msg);
+    const resp = await this.link.reader.readLine();
+    if (resp !== "OK") throw new Error("config rejected: " + resp);
+  }
+
+  async transport(sub) {
+    await this.link.write(Uint8Array.of(0x54, sub.charCodeAt(0))); // 'T'
+    if (sub === "?") {
+      const line = await this.link.reader.readLine();
+      return JSON.parse(line);
+    }
+    const resp = await this.link.reader.readLine(2000);
+    if (resp !== "OK") throw new Error("transport: " + resp);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------- mock device
+// Implements the firmware side of COWORK1 over an in-memory flash image,
+// with responses split at random boundaries to prove framing independence.
+class MockDevice {
+  constructor(flashBytes = 16 * 1024 * 1024, opts = {}) {
+    this.flash = new Uint8Array(flashBytes).fill(0xFF);
+    this.map = computeMap(flashBytes);
+    this.state = { playing: false, role: "leader", linked: false, mode: 0, song: 0, bpm: 120.0, tick: 0 };
+    this.config = defaultConfig();
+    this.fragment = opts.fragment !== false;
+    this.rngState = opts.seed || 42;
+    this.inbox = [];
+    this.inboxLen = 0;
+    this.waiter = null;
+    this.reader = new ByteReader();
+    this._run();
+  }
+
+  // link interface
+  async write(bytes) {
+    this.inbox.push(new Uint8Array(bytes));
+    this.inboxLen += bytes.length;
+    if (this.waiter) { const w = this.waiter; this.waiter = null; w(); }
+  }
+
+  _rand(n) {
+    this.rngState = (this.rngState * 1664525 + 1013904223) >>> 0;
+    return this.rngState % n;
+  }
+
+  _send(bytes) {
+    let b = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(bytes);
+    if (!this.fragment || b.length < 2) { this.reader.push(b); return; }
+    let o = 0;
+    while (o < b.length) {
+      const n = 1 + this._rand(Math.min(64, b.length - o));
+      this.reader.push(b.slice(o, o + n));
+      o += n;
+    }
+  }
+
+  async _recv(n) {
+    while (this.inboxLen < n)
+      await new Promise(res => { this.waiter = res; });
+    const out = new Uint8Array(n);
+    let o = 0;
+    while (o < n) {
+      const c = this.inbox[0];
+      const take = Math.min(c.length, n - o);
+      out.set(c.subarray(0, take), o);
+      o += take;
+      if (take === c.length) this.inbox.shift();
+      else this.inbox[0] = c.subarray(take);
+      this.inboxLen -= take;
+    }
+    return out;
+  }
+
+  _inWritable(off, len) {
+    if (len === 0 || off + len > 0xFFFFFFFF) return false;
+    const m = this.map;
+    const end = off + len;
+    const inSongs = off >= m.songs.off && end <= m.samples.off;
+    const inBank = off >= m.samples.off && end <= m.samples.end;
+    return inSongs || inBank;
+  }
+
+  async _run() {
+    for (;;) {
+      const [cmd] = await this._recv(1);
+      switch (String.fromCharCode(cmd)) {
+      case "X": this._send("SYNC\n"); break;
+      case "Q": break;
+      case "I": {
+        const m = this.map;
+        const json = JSON.stringify({
+          proto: "COWORK1", fw: "mock", flash: m.flash,
+          config: m.config, songs: m.songs, samples: m.samples,
+          state: this.state,
+        });
+        const b = new TextEncoder().encode(json);
+        this._send(u32le(b.length));
+        this._send(b);
+        break;
+      }
+      case "R": {
+        const a = await this._recv(8);
+        const off = readU32(a, 0), len = readU32(a, 4);
+        if (!this._inWritable(off, len)) { this._send(u32le(0)); break; }
+        this._send(u32le(len));
+        const data = this.flash.subarray(off, off + len);
+        let sent = 0;
+        while (sent < len) {
+          const n = Math.min(1024, len - sent);
+          this._send(data.slice(sent, sent + n));
+          sent += n;
+          if (sent < len) {
+            const [ack] = await this._recv(1);
+            if (ack !== 0x41) { sent = -1; break; }
+          }
+        }
+        if (sent < 0) break;
+        this._send(u32le(crc32(data)));
+        this._send("DONE\n");
+        break;
+      }
+      case "W": {
+        const a = await this._recv(12);
+        const off = readU32(a, 0), len = readU32(a, 4), want = readU32(a, 8);
+        if (this.state.playing) { this._send("ERR BUSY\n"); break; }
+        if (!this._inWritable(off, len)) { this._send("ERR RANGE\n"); break; }
+        if (off % SECTOR) { this._send("ERR ALIGN\n"); break; }
+        this._send("OK\n");
+        const body = await this._recv(len);
+        if (crc32(body) !== want || this.corruptNextWrite) {
+          this.corruptNextWrite = false;
+          this._send("CRC\n");
+          break;
+        }
+        // JIT erase then program
+        const eraseEnd = off + Math.ceil(len / SECTOR) * SECTOR;
+        this.flash.fill(0xFF, off, Math.min(eraseEnd, this.flash.length));
+        this.flash.set(body, off);
+        this._send("OK\n");
+        break;
+      }
+      case "E": {
+        const a = await this._recv(8);
+        const off = readU32(a, 0), len = readU32(a, 4);
+        if (this.state.playing) { this._send("ERR BUSY\n"); break; }
+        if (!this._inWritable(off, len)) { this._send("ERR RANGE\n"); break; }
+        if (off % SECTOR || len % SECTOR) { this._send("ERR ALIGN\n"); break; }
+        this.flash.fill(0xFF, off, off + len);
+        this._send("OK\n");
+        break;
+      }
+      case "G": {
+        const blob = encodeConfig(this.config);
+        this._send(u32le(blob.length));
+        this._send(blob);
+        break;
+      }
+      case "S": {
+        const lenB = await this._recv(4);
+        const len = readU32(lenB, 0);
+        if (len !== CONFIG_BYTES) { this._send("ERR LEN\n"); break; }
+        const body = await this._recv(len);
+        const crcB = await this._recv(4);
+        if (readU32(crcB, 0) !== crc32(body)) { this._send("CRC\n"); break; }
+        const c = decodeConfig(body);
+        if (!c) { this._send("ERR LEN\n"); break; }
+        this.config = c;
+        this.state.mode = c.engineMode;
+        this.state.song = c.activeSong;
+        this._send("OK\n");
+        break;
+      }
+      case "T": {
+        const [sub] = await this._recv(1);
+        const s = String.fromCharCode(sub);
+        if (s === "?") this._send(JSON.stringify(this.state) + "\n");
+        else if (s === "S") { this.state.playing = false; this._send("OK\n"); }
+        else if (s === "P") {
+          if (this.state.role !== "leader") this._send("ERR ROLE\n");
+          else { this.state.playing = true; this._send("OK\n"); }
+        }
+        else if (s === "R") this._send("OK\n");
+        break;
+      }
+      default: break;
+      }
+    }
+  }
+}
+
+return {
+  PPQN, SEQ_MAGIC, BANK_MAGIC, CFG_MAGIC, BANK_SLOTS, NUM_LANES, SAMPLE_RATE,
+  SECTOR, SONG_SLOT_BYTES, MAX_EVENTS, CONFIG_BYTES, GM_DRUM_MAP,
+  crc32, u32le, readU32, readU16, computeMap, noteName,
+  parseSMF, smfChannelSummary, suggestChannelMap, convertSMF,
+  encodeSong, decodeSong, decodeSongHeader,
+  encodeBankDir, decodeBankDir, allocateBank,
+  defaultConfig, encodeConfig, decodeConfig,
+  mixToMono, normalizePeak, trimSilence, floatToInt16, int16Bytes,
+  ByteReader, Protocol, MockDevice,
+};
+
+})();
+if (typeof globalThis !== "undefined") globalThis.CoWorkCore = CoWorkCore;
+</script>
+
+<script>
+"use strict";
+// ============================================================================
+// UI layer — browser only. Talks to the card through CoWorkCore.Protocol
+// over Web Serial, or through CoWorkCore.MockDevice in mock mode.
+// ============================================================================
+(() => {
+const C = CoWorkCore;
+const $ = id => document.getElementById(id);
+
+const state = {
+  proto: null,
+  info: null,
+  config: null,
+  songs: [],      // {onCard: header|null, staged: {name, bytes}|null}
+  slots: [],      // 18 sample slots {entry, pcm:Int16Array|null, dirty}
+  connected: false,
+  mock: false,
+  port: null,
+};
+
+function log(msg, cls) {
+  const el = $("log");
+  const line = document.createElement("div");
+  line.textContent = `${new Date().toTimeString().slice(0, 8)}  ${msg}`;
+  if (cls) line.style.color = `var(--${cls})`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ------------------------------------------------------------- connection
+async function connectSerial() {
+  if (!navigator.serial) {
+    log("Web Serial is not available — use Chrome or Edge, or try mock mode.", "err");
+    return;
+  }
+  const port = await navigator.serial.requestPort({
+    filters: [{ usbVendorId: 0x2E8A, usbProductId: 0x10C3 }],
+  });
+  await port.open({ baudRate: 115200 });
+  const reader = new C.ByteReader();
+  const writer = port.writable.getWriter();
+  (async () => {
+    const r = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await r.read();
+        if (done) break;
+        if (value) reader.push(value);
+      }
+    } catch (e) { /* device unplugged */ }
+    disconnect("device disconnected");
+  })();
+  state.port = port;
+  state.proto = new C.Protocol({ write: b => writer.write(b), reader });
+  state.mock = false;
+  await afterConnect();
+}
+
+async function connectMock() {
+  const mock = new C.MockDevice(16 * 1024 * 1024);
+  state.proto = new C.Protocol(mock);
+  state.mock = true;
+  await afterConnect();
+  log("Mock mode: simulated 16 MB card. Nothing here touches real hardware.", "warn");
+}
+
+function disconnect(reason) {
+  state.connected = false;
+  state.proto = null;
+  $("connState").textContent = "disconnected";
+  $("connState").className = "pill";
+  $("btnConnect").textContent = "Connect";
+  if (reason) log(reason, "warn");
+}
+
+async function afterConnect() {
+  await state.proto.sync();
+  state.info = await state.proto.info();
+  if (state.info.proto !== "COWORK1") throw new Error("Not a CoWork card");
+  state.config = await state.proto.getConfig();
+  state.connected = true;
+  $("connState").textContent = state.mock ? "mock" : "connected";
+  $("connState").className = "pill on";
+  $("btnConnect").textContent = "Disconnect";
+  log(`Connected: ${state.info.flash / 1048576} MB card, fw ${state.info.fw}`);
+  await refreshCardContent();
+  for (const id of ["statusPanel", "songsPanel", "instrPanel", "kitPanel", "configPanel", "applyPanel"])
+    $(id).hidden = false;
+  renderAll();
+  pollStatus();
+}
+
+async function refreshCardContent() {
+  const p = state.proto, inf = state.info;
+  // Songs: read the 64-byte header of each slot
+  state.songs = [];
+  for (let i = 0; i < inf.songs.slots; i++) {
+    const hdr = await p.read(inf.songs.off + i * inf.songs.slotLen, 64);
+    state.songs.push({ onCard: C.decodeSongHeader(hdr), staged: null });
+  }
+  // Sample directory
+  const dir = await p.read(inf.samples.off, C.SECTOR).catch(() => null);
+  const decoded = dir ? C.decodeBankDir(dir) : null;
+  state.slots = [];
+  for (let i = 0; i < C.BANK_SLOTS; i++) {
+    const e = decoded ? decoded.slots[i] : null;
+    const populated = e && e.lengthFrames > 0 && e.offset !== 0xFFFFFFFF;
+    state.slots.push({
+      entry: populated ? e : emptySlotEntry(i),
+      pcm: null,
+      dirty: false,
+      onCard: !!populated,
+    });
+  }
+}
+
+function emptySlotEntry(i) {
+  const base = { name: "", offset: 0xFFFFFFFF, lengthFrames: 0, dataCrc: 0, flags: 0 };
+  if (i === 0) return { ...base, root: 60, assignNote: 0xFF, choke: 0, name: "" };
+  if (i === 1) return { ...base, root: 36, assignNote: 0xFF, choke: 0, name: "" };
+  const gm = C.GM_DRUM_MAP[i - 2];
+  return { ...base, root: 0xFF, assignNote: gm.note, choke: gm.choke, name: "" };
+}
+
+// ------------------------------------------------------------- status
+let pollTimer = null;
+async function pollStatus() {
+  if (pollTimer) clearTimeout(pollTimer);
+  if (!state.connected) return;
+  try {
+    const st = await state.proto.transport("?");
+    $("stRole").textContent = st.role;
+    $("stMode").textContent = st.mode ? "percussive" : "melodic";
+    $("stPlaying").textContent = st.playing ? "playing" : "stopped";
+    $("stPlaying").className = "pill" + (st.playing ? " on" : "");
+    $("stBpm").textContent = `${st.bpm} BPM`;
+    $("stLinked").textContent = st.linked ? "linked" : "no link";
+    $("stLinked").className = "pill" + (st.linked ? " on" : "");
+  } catch (e) { /* transient */ }
+  pollTimer = setTimeout(pollStatus, 2000);
+}
+
+function renderStatus() {
+  const inf = state.info;
+  $("stFlash").textContent = `${inf.flash / 1048576} MB card — ${inf.songs.slots} songs`;
+  const total = inf.samples.end - inf.samples.dataOff;
+  let used = 0;
+  for (const s of state.slots)
+    if (s.entry.lengthFrames && s.entry.offset !== 0xFFFFFFFF)
+      used += Math.ceil(s.entry.lengthFrames * 2 / C.SECTOR) * C.SECTOR;
+  $("stUsage").textContent =
+    `${(used / 1048576).toFixed(2)} / ${(total / 1048576).toFixed(1)} MB` +
+    ` (~${Math.floor((total - used) / 48000)} s free at 24 kHz)`;
+  $("usageBar").style.width = `${Math.min(100, used * 100 / total)}%`;
+}
+
+// ------------------------------------------------------------- songs UI
+function renderSongs() {
+  const grid = $("songGrid");
+  grid.innerHTML = "";
+  state.songs.forEach((slot, i) => {
+    const cell = document.createElement("div");
+    cell.className = "cell drop" + (slot.staged ? " dirty" : "");
+    const cur = slot.staged
+      ? { name: slot.staged.name, tag: "staged" }
+      : slot.onCard ? { name: slot.onCard.name, tag: songMeta(slot.onCard) } : null;
+    cell.innerHTML = `<h3>Slot ${i + 1}${state.config && state.config.activeSong === i ? " ●" : ""}</h3>
+      <div class="meta">${cur ? `${escapeHtml(cur.name || "(unnamed)")}<br>${cur.tag}` : "empty — drop a .mid file"}</div>
+      <div class="row" style="margin-top:6px">
+        ${cur ? `<button data-act="clear">Clear</button>` : ""}
+        <button data-act="active">Set active</button>
+      </div>`;
+    hookDrop(cell, files => importMidi(files[0], i));
+    cell.querySelector('[data-act="active"]').onclick = async () => {
+      state.config.activeSong = i;
+      await pushConfig();
+      renderSongs();
+    };
+    const clearBtn = cell.querySelector('[data-act="clear"]');
+    if (clearBtn) clearBtn.onclick = () => {
+      slot.staged = { name: "", bytes: null, clear: true };
+      renderAll();
+    };
+    grid.appendChild(cell);
+  });
+}
+
+function songMeta(h) {
+  const bars = h.tsig.num ? Math.round(h.lengthTicks / (h.tsig.num * C.PPQN * 4 / (1 << h.tsig.denomLog2))) : 0;
+  const bpm = Math.round(60000000 / h.tempoUspq);
+  return `${bars} bars · ${bpm} BPM · ${h.eventCount} events`;
+}
+
+async function importMidi(file, slotIdx) {
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = C.parseSMF(new Uint8Array(await file.arrayBuffer()));
+  } catch (e) {
+    log(`MIDI import failed: ${e.message}`, "err");
+    return;
+  }
+  const summary = C.smfChannelSummary(parsed);
+  if (!summary.length) { log("No notes found in that file.", "err"); return; }
+  const suggested = C.suggestChannelMap(summary);
+
+  const dlg = $("midiDialog");
+  $("midiInfo").textContent =
+    `${file.name} — format ${parsed.format}, ${parsed.tracks.length} tracks, division ${parsed.division}`;
+  const tbl = $("midiTable");
+  tbl.innerHTML = `<tr><th>Ch</th><th>Tracks</th><th>Notes</th><th>Range</th><th>Part</th></tr>`;
+  const partNames = ["Lead", "Bass", "Drums", "Ignore"];
+  for (const c of summary) {
+    const tr = document.createElement("tr");
+    const opts = partNames.map((n, v) => {
+      const val = v === 3 ? -1 : v;
+      return `<option value="${val}" ${suggested[c.ch] === val ? "selected" : ""}>${n}</option>`;
+    }).join("");
+    tr.innerHTML = `<td>${c.ch + 1}</td><td>${escapeHtml([...c.trackNames].join(", ")) || "–"}</td>
+      <td>${c.notes}</td><td>${C.noteName(c.min)}–${C.noteName(c.max)}</td>
+      <td><select data-ch="${c.ch}">${opts}</select></td>`;
+    tbl.appendChild(tr);
+  }
+  const updatePreview = () => {
+    const map = {};
+    tbl.querySelectorAll("select").forEach(s => map[+s.dataset.ch] = +s.value);
+    try {
+      const conv = C.convertSMF(parsed, map);
+      $("midiPreview").textContent =
+        `${conv.stats.events} events · ${conv.stats.bytes} bytes of ${C.SONG_SLOT_BYTES}` +
+        ` · ${conv.stats.bars} bars · ${conv.stats.tempoChanges} tempo changes` +
+        (conv.stats.truncated ? " · TRUNCATED (over 64 KB)" : "");
+      dlg.dataset.ok = conv.stats.truncated ? "" : "1";
+    } catch (e) {
+      $("midiPreview").textContent = e.message;
+      dlg.dataset.ok = "";
+    }
+  };
+  tbl.querySelectorAll("select").forEach(s => s.onchange = updatePreview);
+  updatePreview();
+  dlg.showModal();
+
+  $("midiCancel").onclick = () => dlg.close();
+  $("midiOk").onclick = () => {
+    const map = {};
+    tbl.querySelectorAll("select").forEach(s => map[+s.dataset.ch] = +s.value);
+    const conv = C.convertSMF(parsed, map);
+    const name = file.name.replace(/\.midi?$/i, "").slice(0, 23);
+    const bytes = C.encodeSong({ name, events: conv.events, lengthTicks: conv.lengthTicks,
+                                 tempoUspq: conv.tempoUspq, tsig: conv.tsig });
+    state.songs[slotIdx].staged = { name, bytes };
+    dlg.close();
+    log(`Staged "${name}" to slot ${slotIdx + 1} (${bytes.length} bytes).`);
+    renderAll();
+  };
+}
+
+// ------------------------------------------------------------- samples UI
+function renderInstruments() {
+  const grid = $("instrGrid");
+  grid.innerHTML = "";
+  [0, 1].forEach(i => {
+    const s = state.slots[i];
+    const label = i === 0 ? "LEAD" : "BASS";
+    const cell = document.createElement("div");
+    cell.className = "cell drop" + (s.dirty ? " dirty" : "");
+    const has = s.entry.lengthFrames > 0;
+    cell.innerHTML = `<h3>${label}</h3>
+      <div class="meta">${has ? `${escapeHtml(s.entry.name)} · ${(s.entry.lengthFrames / C.SAMPLE_RATE).toFixed(2)} s${s.onCard && !s.dirty ? " · on card" : ""}` : "empty — drop an audio file"}</div>
+      <canvas class="wave" width="400" height="46"></canvas>
+      <div class="row">
+        <label class="hint">root
+          <select data-root>${rootOptions(s.entry.root)}</select></label>
+        <label class="hint"><input type="checkbox" data-loop ${s.entry.flags & 1 ? "checked" : ""}> loop</label>
+        ${s.pcm ? `<button data-act="play">▶</button>` : ""}
+        ${has ? `<button data-act="clear">Clear</button>` : ""}
+      </div>`;
+    hookDrop(cell, files => importSample(files[0], i));
+    drawWave(cell.querySelector("canvas"), s.pcm);
+    cell.querySelector("[data-root]").onchange = e => { s.entry.root = +e.target.value; markSlotDirtyMeta(i); };
+    cell.querySelector("[data-loop]").onchange = e => { s.entry.flags = e.target.checked ? 1 : 0; markSlotDirtyMeta(i); };
+    const play = cell.querySelector('[data-act="play"]');
+    if (play) play.onclick = () => audition(s.pcm);
+    const clear = cell.querySelector('[data-act="clear"]');
+    if (clear) clear.onclick = () => { clearSlot(i); };
+    grid.appendChild(cell);
+  });
+}
+
+function renderKit() {
+  const grid = $("kitGrid");
+  grid.innerHTML = "";
+  for (let lane = 0; lane < C.NUM_LANES; lane++) {
+    const i = 2 + lane;
+    const s = state.slots[i];
+    const gm = C.GM_DRUM_MAP[lane];
+    const has = s.entry.lengthFrames > 0;
+    const cell = document.createElement("div");
+    cell.className = "cell drop" + (s.dirty ? " dirty" : "");
+    cell.innerHTML = `<h3>${lane + 1}. ${escapeHtml(s.entry.name || gm.name)}</h3>
+      <div class="meta">${has ? `${(s.entry.lengthFrames / C.SAMPLE_RATE).toFixed(2)} s${s.onCard && !s.dirty ? " · on card" : ""}` : "empty"}</div>
+      <div class="row" style="margin-top:4px">
+        <label class="hint">note <input type="number" min="0" max="127" value="${s.entry.assignNote}" data-note style="width:60px"></label>
+        <label class="hint">choke <select data-choke>${[0,1,2,3,4].map(g => `<option ${s.entry.choke === g ? "selected" : ""}>${g}</option>`).join("")}</select></label>
+      </div>
+      <div class="row" style="margin-top:4px">
+        ${s.pcm ? `<button data-act="play">▶</button>` : ""}
+        ${has ? `<button data-act="clear">Clear</button>` : ""}
+      </div>`;
+    hookDrop(cell, files => importSample(files[0], i));
+    cell.querySelector("[data-note]").onchange = e => {
+      const v = Math.max(0, Math.min(127, +e.target.value));
+      s.entry.assignNote = v;
+      markSlotDirtyMeta(i);
+    };
+    cell.querySelector("[data-choke]").onchange = e => { s.entry.choke = +e.target.value; markSlotDirtyMeta(i); };
+    const play = cell.querySelector('[data-act="play"]');
+    if (play) play.onclick = () => audition(s.pcm);
+    const clear = cell.querySelector('[data-act="clear"]');
+    if (clear) clear.onclick = () => clearSlot(i);
+    grid.appendChild(cell);
+  }
+}
+
+function rootOptions(sel) {
+  let out = "";
+  for (let n = 24; n <= 96; n++)
+    out += `<option value="${n}" ${n === sel ? "selected" : ""}>${C.noteName(n)}</option>`;
+  return out;
+}
+
+function markSlotDirtyMeta(i) {
+  // Metadata-only change: directory rewrite needed, PCM stays put
+  state.slots[i].metaDirty = true;
+  renderApply();
+}
+
+function clearSlot(i) {
+  state.slots[i] = { entry: emptySlotEntry(i), pcm: null, dirty: true, onCard: false };
+  renderAll();
+}
+
+async function importSample(file, slotIdx) {
+  if (!file) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await ctx.decodeAudioData(await file.arrayBuffer());
+    ctx.close();
+    const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * C.SAMPLE_RATE), C.SAMPLE_RATE);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    const resampled = await off.startRendering();
+    let f32 = resampled.getChannelData(0);
+    f32 = C.trimSilence(f32);
+    f32 = C.normalizePeak(f32, -1);
+    const pcm = C.floatToInt16(f32);
+    if (pcm.length < 16) { log("Sample too short after trimming.", "err"); return; }
+
+    const s = state.slots[slotIdx];
+    s.pcm = pcm;
+    s.dirty = true;
+    s.onCard = false;
+    s.entry.name = file.name.replace(/\.[^.]+$/, "").slice(0, 11);
+    s.entry.lengthFrames = pcm.length;
+    s.entry.dataCrc = C.crc32(C.int16Bytes(pcm));
+    s.entry.offset = 0xFFFFFFFF; // allocated at Apply time
+    log(`Loaded "${file.name}" -> ${(pcm.length / C.SAMPLE_RATE).toFixed(2)} s @ 24 kHz.`);
+    renderAll();
+  } catch (e) {
+    log(`Audio import failed: ${e.message}`, "err");
+  }
+}
+
+function audition(pcm) {
+  if (!pcm) return;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = ctx.createBuffer(1, pcm.length, C.SAMPLE_RATE);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.onended = () => ctx.close();
+  src.start();
+}
+
+function drawWave(canvas, pcm) {
+  const g = canvas.getContext("2d");
+  g.fillStyle = "#171a1f";
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  if (!pcm || !pcm.length) return;
+  g.strokeStyle = "#58a6ff";
+  g.beginPath();
+  const mid = canvas.height / 2;
+  const step = Math.max(1, Math.floor(pcm.length / canvas.width));
+  for (let x = 0; x < canvas.width; x++) {
+    let peak = 0;
+    for (let i = x * step; i < Math.min((x + 1) * step, pcm.length); i++)
+      peak = Math.max(peak, Math.abs(pcm[i]));
+    const h = peak / 32768 * mid;
+    g.moveTo(x + .5, mid - h);
+    g.lineTo(x + .5, mid + h || mid + .5);
+  }
+  g.stroke();
+}
+
+// ------------------------------------------------------------- config UI
+function renderConfig() {
+  const c = state.config;
+  const grid = $("cfgGrid");
+  const laneNames = C.GM_DRUM_MAP.map((g, i) => `${i + 1} ${g.name}`);
+  const sel = (opts, val, attr) =>
+    `<select ${attr}>${opts.map((o, i) => `<option value="${i}" ${i === val ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+  const srcSel = (bit, attr) => sel(["local", "peer (remote)"], (c.outSrcBits >> bit) & 1, attr);
+
+  grid.innerHTML = `
+    <label class="cfg">Engine mode ${sel(["melodic", "percussive"], c.engineMode, 'data-k="engineMode"')}</label>
+    <label class="cfg">Internal tempo <input type="number" data-k="tempoBpmX10" data-scale="10" min="40" max="240" step="0.5" value="${c.tempoBpmX10 / 10}" style="width:70px"></label>
+    <label class="cfg">CV Out 1 source ${srcSel(0, 'data-src="0"')}</label>
+    <label class="cfg">CV Out 2 source ${srcSel(1, 'data-src="1"')}</label>
+    <label class="cfg">Pulse Out 1 source ${srcSel(2, 'data-src="2"')}</label>
+    <label class="cfg">Pulse Out 2 source ${srcSel(3, 'data-src="3"')}</label>
+    <label class="cfg">Pulse 1 lane (perc) ${sel(laneNames, c.pulse1Lane, 'data-k="pulse1Lane"')}</label>
+    <label class="cfg">Pulse 2 lane (perc) ${sel(laneNames, c.pulse2Lane, 'data-k="pulse2Lane"')}</label>
+    <label class="cfg">CV 2 velocity lane ${sel(laneNames, c.cv2Lane, 'data-k="cv2Lane"')}</label>
+    <label class="cfg">Lead release (ms) <input type="number" data-k="releaseLead" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseLead * 4}" style="width:70px"></label>
+    <label class="cfg">Bass release (ms) <input type="number" data-k="releaseBass" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseBass * 4}" style="width:70px"></label>
+    <label class="cfg">Forward CV In 1 <input type="checkbox" data-fwd="0" ${c.fwdEnable & 1 ? "checked" : ""}></label>
+    <label class="cfg">Forward CV In 2 <input type="checkbox" data-fwd="1" ${c.fwdEnable & 2 ? "checked" : ""}></label>
+    <label class="cfg">Forward Pulse In 1 <input type="checkbox" data-fwd="2" ${c.fwdEnable & 4 ? "checked" : ""}></label>
+    <label class="cfg">Forward Pulse In 2 <input type="checkbox" data-fwd="3" ${c.fwdEnable & 8 ? "checked" : ""}></label>
+  `;
+  grid.querySelectorAll("[data-k]").forEach(el => el.onchange = async () => {
+    const scale = +(el.dataset.scale || 1);
+    c[el.dataset.k] = Math.round((+el.value !== undefined && el.tagName === "INPUT" ? +el.value : +el.value) * scale) || +el.value * scale || +el.value;
+    if (el.tagName === "SELECT") c[el.dataset.k] = +el.value;
+    await pushConfig();
+  });
+  grid.querySelectorAll("[data-src]").forEach(el => el.onchange = async () => {
+    const bit = +el.dataset.src;
+    c.outSrcBits = (c.outSrcBits & ~(1 << bit)) | ((+el.value) << bit);
+    await pushConfig();
+  });
+  grid.querySelectorAll("[data-fwd]").forEach(el => el.onchange = async () => {
+    const bit = +el.dataset.fwd;
+    c.fwdEnable = (c.fwdEnable & ~(1 << bit)) | ((el.checked ? 1 : 0) << bit);
+    await pushConfig();
+  });
+}
+
+async function pushConfig() {
+  if (!state.connected) return;
+  try {
+    await state.proto.setConfig(state.config);
+    log("Config applied.");
+  } catch (e) {
+    log(`Config rejected: ${e.message}`, "err");
+  }
+}
+
+// ------------------------------------------------------------- apply
+function stagedChanges() {
+  const songs = state.songs.map((s, i) => ({ i, s })).filter(x => x.s.staged);
+  const pcmDirty = state.slots.filter(s => s.dirty);
+  const metaDirty = state.slots.filter(s => s.metaDirty && !s.dirty);
+  return { songs, pcmDirty, metaDirty,
+           any: songs.length || pcmDirty.length || metaDirty.length };
+}
+
+function renderApply() {
+  const ch = stagedChanges();
+  $("btnApply").disabled = !ch.any;
+  let bytes = 0;
+  for (const { s } of ch.songs) if (s.staged.bytes) bytes += s.staged.bytes.length;
+  for (const s of ch.pcmDirty) if (s.pcm) bytes += s.pcm.length * 2;
+  $("applySummary").textContent = ch.any
+    ? `${ch.songs.length} song(s), ${ch.pcmDirty.length} sample(s), ` +
+      `${ch.metaDirty.length} metadata change(s) — ~${(bytes / 1024).toFixed(0)} KB to write`
+    : "No staged changes.";
+}
+
+async function applyChanges() {
+  const p = state.proto, inf = state.info;
+  const ch = stagedChanges();
+  if (!ch.any) return;
+  const btn = $("btnApply");
+  btn.disabled = true;
+  const bar = $("applyBar");
+  const detail = $("applyDetail");
+  const setBar = (f, txt) => { bar.style.width = `${Math.round(f * 100)}%`; detail.textContent = txt; };
+
+  try {
+    setBar(0.02, "Stopping transport…");
+    await p.transport("S");
+
+    // Allocate flash for new/changed sample PCM
+    const bankBytes = inf.samples.end - inf.samples.off;
+    const allocSlots = state.slots.map(s => ({ ...s.entry, dirty: s.dirty && s.entry.lengthFrames > 0 }));
+    const plan = C.allocateBank(allocSlots, bankBytes);
+    if (!plan) throw new Error("Not enough free sample space — clear some slots first");
+    state.slots.forEach((s, i) => { s.entry.offset = allocSlots[i].offset; });
+
+    // Data first, directory last (crash safety)
+    let step = 0;
+    const steps = ch.pcmDirty.filter(s => s.pcm).length + ch.songs.length + 1;
+    for (const s of state.slots) {
+      if (!s.dirty || !s.pcm) continue;
+      const abs = inf.samples.off + s.entry.offset;
+      setBar((++step) / (steps + 1), `Writing sample "${s.entry.name}"…`);
+      await p.write(abs, C.int16Bytes(s.pcm),
+        (done, total) => setBar((step - 1 + done / total) / (steps + 1), `Writing "${s.entry.name}" ${(done / 1024) | 0}/${(total / 1024) | 0} KB`));
+    }
+    for (const { i, s } of ch.songs) {
+      const abs = inf.songs.off + i * inf.songs.slotLen;
+      if (s.staged.clear) {
+        setBar((++step) / (steps + 1), `Clearing song slot ${i + 1}…`);
+        await p.erase(abs, C.SECTOR);
+      } else {
+        setBar((++step) / (steps + 1), `Writing song "${s.staged.name}"…`);
+        await p.write(abs, s.staged.bytes);
+      }
+    }
+    setBar((++step) / (steps + 1), "Writing sample directory…");
+    const entries = state.slots.map(s => (s.entry.lengthFrames > 0 && s.entry.offset !== 0xFFFFFFFF) ? s.entry : { offset: 0xFFFFFFFF, lengthFrames: 0, root: s.entry.root, assignNote: s.entry.assignNote, choke: s.entry.choke, name: s.entry.name, flags: s.entry.flags, dataCrc: 0 });
+    await p.write(inf.samples.off, C.encodeBankDir(entries, plan.used));
+    await p.transport("R"); // rescan
+
+    setBar(1, "Done.");
+    log("Apply complete.", "ok");
+    await refreshCardContent();
+    renderAll();
+  } catch (e) {
+    log(`Apply failed: ${e.message}`, "err");
+    detail.textContent = `Failed: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+
+// ------------------------------------------------------------- misc UI
+function hookDrop(el, fn) {
+  el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("dragover"); });
+  el.addEventListener("dragleave", () => el.classList.remove("dragover"));
+  el.addEventListener("drop", e => {
+    e.preventDefault();
+    el.classList.remove("dragover");
+    if (e.dataTransfer.files.length) fn(e.dataTransfer.files);
+  });
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function renderAll() {
+  renderStatus();
+  renderSongs();
+  renderInstruments();
+  renderKit();
+  renderConfig();
+  renderApply();
+}
+
+// ------------------------------------------------------------- wiring
+$("btnConnect").onclick = async () => {
+  if (state.connected) { disconnect("disconnected"); return; }
+  try { await connectSerial(); }
+  catch (e) { log(`Connect failed: ${e.message}`, "err"); }
+};
+$("btnMock").onclick = () => connectMock().catch(e => log(e.message, "err"));
+$("btnApply").onclick = applyChanges;
+$("btnRefresh").onclick = async () => { await refreshCardContent(); renderAll(); };
+$("btnPlay").onclick = () => state.proto.transport("P").catch(e => log(e.message, "err"));
+$("btnStop").onclick = () => state.proto.transport("S").catch(e => log(e.message, "err"));
+$("btnGmReset").onclick = () => {
+  for (let lane = 0; lane < C.NUM_LANES; lane++) {
+    state.slots[2 + lane].entry.assignNote = C.GM_DRUM_MAP[lane].note;
+    state.slots[2 + lane].entry.choke = C.GM_DRUM_MAP[lane].choke;
+    state.slots[2 + lane].metaDirty = true;
+  }
+  renderAll();
+};
+
+if (new URLSearchParams(location.search).get("mock") === "1")
+  connectMock().catch(e => log(e.message, "err"));
+
+log("CoWork Manager ready. Connect a card over USB, or try mock mode.");
+})();
+</script>
+</body>
+</html>
