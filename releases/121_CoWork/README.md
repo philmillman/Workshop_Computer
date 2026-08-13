@@ -22,7 +22,8 @@ Works on 2 MB program cards, shines on 16 MB.
 2. Connect the Computer's USB port to your computer and open
    `web/cowork.html` (or the hosted editor) in Chrome/Edge. Click **Connect**.
 3. Drop a `.mid` file on a song slot, drop samples on the instrument/drum
-   pads, and **Apply**.
+   pads, and **Apply**. Ready-made test songs and a full synthesized kit
+   live in [examples/](examples/) — see its README for a quick start.
 
 ## Leader / follower
 
