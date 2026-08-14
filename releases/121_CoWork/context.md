@@ -21,6 +21,11 @@ Read `docs/FORMATS.md` first: it is the contract between `src/` and
 - The follower's clock DLL (`seq/ClockRecovery.h`) clamps rate trim to
   ±3% and hard-resyncs beyond one beat. The leader never listens to its
   own clock; its timebase is the 48 kHz sample counter.
+- The Main-knob loop-roll is an overlay in `CoWorkCard`: the sequencer's
+  dispatch position wraps a window while `masterPhaseQ16_` keeps running.
+  The leader's 0xF8 output and the follower's DLL both track the MASTER
+  phase during a roll — never the rolled position — so the link stays
+  steady and disengaging drops back in on time.
 
 ## Known traps
 

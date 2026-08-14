@@ -163,7 +163,7 @@ const PPQN = 96;
 const SEQ_MAGIC = 0x51535743;   // "CWSQ"
 const BANK_MAGIC = 0x42535743;  // "CWSB"
 const CFG_MAGIC = 0x46435743;   // "CWCF"
-const BANK_SLOTS = 18;
+const BANK_SLOTS = 19;
 const NUM_LANES = 16;
 const SAMPLE_RATE = 24000;
 const SECTOR = 4096;
@@ -343,11 +343,14 @@ function suggestChannelMap(summary) {
   if (melodic.length) {
     const byPitch = [...melodic].sort((a, b) => a.avg - b.avg);
     const bass = byPitch[0];
-    const rest = melodic.filter(c => c !== bass);
-    const lead = rest.sort((a, b) => b.notes - a.notes)[0];
-    if (lead) map[lead.ch] = 0;
-    if (rest.length || !lead) map[bass.ch] = 1;
-    else map[bass.ch] = 0; // only one melodic channel: make it the lead
+    const rest = melodic.filter(c => c !== bass).sort((a, b) => b.notes - a.notes);
+    if (rest.length === 0) {
+      map[bass.ch] = 0; // only one melodic channel: make it the lead
+    } else {
+      map[bass.ch] = 1;
+      map[rest[0].ch] = 0;          // densest remaining -> lead
+      if (rest.length > 1) map[rest[1].ch] = 3; // next -> pad
+    }
   }
   return map;
 }
@@ -606,11 +609,11 @@ function allocateBank(slots, bankBytes) {
 // ---------------------------------------------------------------- CWCF codec
 function defaultConfig() {
   const chanMap = new Array(16).fill(0xFF);
-  chanMap[0] = 0; chanMap[1] = 1; chanMap[9] = 2;
+  chanMap[0] = 0; chanMap[1] = 1; chanMap[2] = 3; chanMap[9] = 2;
   return {
     engineMode: 0, activeSong: 0, tempoBpmX10: 1200, swing: 50,
     outSrcBits: 0, fwdEnable: 0x0F, pulse1Lane: 0, pulse2Lane: 2, cv2Lane: 0,
-    out2LaneMask: 0x0001, releaseLead: 15, releaseBass: 30, masterVol: 200,
+    out2LaneMask: 0x0001, releaseLead: 15, releaseBass: 30, releasePad: 60, masterVol: 200,
     midiChannelToPart: chanMap,
   };
 }
@@ -625,7 +628,7 @@ function encodeConfig(c) {
   buf[13] = c.pulse1Lane; buf[14] = c.pulse2Lane; buf[15] = c.cv2Lane;
   writeU16(buf, 16, c.out2LaneMask);
   buf[18] = c.releaseLead; buf[19] = c.releaseBass; buf[20] = c.masterVol;
-  buf[21] = 0;
+  buf[21] = c.releasePad;
   for (let i = 0; i < 16; i++) buf[22 + i] = c.midiChannelToPart[i];
   writeU32(buf, 124, crc32(buf.subarray(0, 124)));
   return buf;
@@ -640,6 +643,7 @@ function decodeConfig(bytes) {
     pulse1Lane: bytes[13], pulse2Lane: bytes[14], cv2Lane: bytes[15],
     out2LaneMask: readU16(bytes, 16),
     releaseLead: bytes[18], releaseBass: bytes[19], masterVol: bytes[20],
+    releasePad: bytes[21],
     midiChannelToPart: Array.from(bytes.subarray(22, 38)),
   };
   return c;
@@ -1147,7 +1151,8 @@ function emptySlotEntry(i) {
   const base = { name: "", offset: 0xFFFFFFFF, lengthFrames: 0, dataCrc: 0, flags: 0 };
   if (i === 0) return { ...base, root: 60, assignNote: 0xFF, choke: 0, name: "" };
   if (i === 1) return { ...base, root: 36, assignNote: 0xFF, choke: 0, name: "" };
-  const gm = C.GM_DRUM_MAP[i - 2];
+  if (i === 2) return { ...base, root: 60, assignNote: 0xFF, choke: 0, name: "" };
+  const gm = C.GM_DRUM_MAP[i - 3];
   return { ...base, root: 0xFF, assignNote: gm.note, choke: gm.choke, name: "" };
 }
 
@@ -1238,11 +1243,11 @@ async function importMidi(file, slotIdx) {
     `${file.name} — format ${parsed.format}, ${parsed.tracks.length} tracks, division ${parsed.division}`;
   const tbl = $("midiTable");
   tbl.innerHTML = `<tr><th>Ch</th><th>Tracks</th><th>Notes</th><th>Range</th><th>Part</th></tr>`;
-  const partNames = ["Lead", "Bass", "Drums", "Ignore"];
+  const partNames = ["Lead", "Bass", "Drums", "Pad", "Ignore"];
   for (const c of summary) {
     const tr = document.createElement("tr");
     const opts = partNames.map((n, v) => {
-      const val = v === 3 ? -1 : v;
+      const val = v === 4 ? -1 : v;
       return `<option value="${val}" ${suggested[c.ch] === val ? "selected" : ""}>${n}</option>`;
     }).join("");
     tr.innerHTML = `<td>${c.ch + 1}</td><td>${escapeHtml([...c.trackNames].join(", ")) || "–"}</td>
@@ -1288,9 +1293,9 @@ async function importMidi(file, slotIdx) {
 function renderInstruments() {
   const grid = $("instrGrid");
   grid.innerHTML = "";
-  [0, 1].forEach(i => {
+  [0, 1, 2].forEach(i => {
     const s = state.slots[i];
-    const label = i === 0 ? "LEAD" : "BASS";
+    const label = ["LEAD", "BASS", "PAD"][i];
     const cell = document.createElement("div");
     cell.className = "cell drop" + (s.dirty ? " dirty" : "");
     const has = s.entry.lengthFrames > 0;
@@ -1320,7 +1325,7 @@ function renderKit() {
   const grid = $("kitGrid");
   grid.innerHTML = "";
   for (let lane = 0; lane < C.NUM_LANES; lane++) {
-    const i = 2 + lane;
+    const i = 3 + lane;
     const s = state.slots[i];
     const gm = C.GM_DRUM_MAP[lane];
     const has = s.entry.lengthFrames > 0;
@@ -1456,6 +1461,7 @@ function renderConfig() {
     <label class="cfg">CV 2 velocity lane ${sel(laneNames, c.cv2Lane, 'data-k="cv2Lane"')}</label>
     <label class="cfg">Lead release (ms) <input type="number" data-k="releaseLead" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseLead * 4}" style="width:70px"></label>
     <label class="cfg">Bass release (ms) <input type="number" data-k="releaseBass" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseBass * 4}" style="width:70px"></label>
+    <label class="cfg">Pad release (ms) <input type="number" data-k="releasePad" data-scale="0.25" min="4" max="1020" step="4" value="${c.releasePad * 4}" style="width:70px"></label>
     <label class="cfg">Forward CV In 1 <input type="checkbox" data-fwd="0" ${c.fwdEnable & 1 ? "checked" : ""}></label>
     <label class="cfg">Forward CV In 2 <input type="checkbox" data-fwd="1" ${c.fwdEnable & 2 ? "checked" : ""}></label>
     <label class="cfg">Forward Pulse In 1 <input type="checkbox" data-fwd="2" ${c.fwdEnable & 4 ? "checked" : ""}></label>
@@ -1604,9 +1610,9 @@ $("btnPlay").onclick = () => state.proto.transport("P").catch(e => log(e.message
 $("btnStop").onclick = () => state.proto.transport("S").catch(e => log(e.message, "err"));
 $("btnGmReset").onclick = () => {
   for (let lane = 0; lane < C.NUM_LANES; lane++) {
-    state.slots[2 + lane].entry.assignNote = C.GM_DRUM_MAP[lane].note;
-    state.slots[2 + lane].entry.choke = C.GM_DRUM_MAP[lane].choke;
-    state.slots[2 + lane].metaDirty = true;
+    state.slots[3 + lane].entry.assignNote = C.GM_DRUM_MAP[lane].note;
+    state.slots[3 + lane].entry.choke = C.GM_DRUM_MAP[lane].choke;
+    state.slots[3 + lane].metaDirty = true;
   }
   renderAll();
 };

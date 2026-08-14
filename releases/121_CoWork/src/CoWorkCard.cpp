@@ -27,6 +27,8 @@ void CoWorkCard::OnNoteOn(uint8_t part, uint8_t note, uint8_t vel)
 			engine_.NoteOn(kPartBass, note, vel);
 			bassGate_++;
 			lastBassNote_ = note;
+		} else if (part == kPartPad) {
+			engine_.NoteOn(kPartPad, note, vel); // no CV/gate mapping
 		}
 	}
 }
@@ -40,6 +42,8 @@ void CoWorkCard::OnNoteOff(uint8_t part, uint8_t note)
 	} else if (part == kPartBass) {
 		engine_.NoteOff(kPartBass, note);
 		if (bassGate_ > 0) bassGate_--;
+	} else if (part == kPartPad) {
+		engine_.NoteOff(kPartPad, note);
 	}
 }
 
@@ -84,6 +88,9 @@ void CoWorkCard::StartTransport(bool resetPosition)
 		seq_.Reset();
 		ClearGates();
 	}
+	masterPhaseQ16_ = seq_.PhaseQ16();
+	if (loopLenTicks_)
+		loopAnchor_ = (seq_.Tick() / loopLenTicks_) * loopLenTicks_;
 	lastClockTick_ = 0xFFFFFFFF; // re-arm the tick-0 clock
 	running_ = true;
 	gShared.transportRunning = 1;
@@ -110,6 +117,25 @@ void CoWorkCard::AttachSong(uint32_t slot)
 	} else {
 		seq_.Detach();
 	}
+	masterPhaseQ16_ = seq_.PhaseQ16();
+	loopAnchor_ = 0;
+}
+
+// Double-tap: advance to the next loaded song slot, skipping empty ones.
+// While running the change lands at the loop point (pendingSong_).
+void CoWorkCard::AdvanceSong()
+{
+	if (!bank_ || bank_->songSlots == 0) return;
+	uint32_t n = bank_->songSlots;
+	uint32_t base = (pendingSong_ != 0xFF) ? pendingSong_ : gShared.statusSong;
+	for (uint32_t i = 1; i <= n; i++) {
+		uint32_t s = (base + i) % n;
+		if (!bank_->song[s].valid) continue;
+		if (s == base) return; // only one loaded song
+		if (running_) pendingSong_ = (uint8_t)s;
+		else AttachSong(s);
+		return;
+	}
 }
 
 void CoWorkCard::ApplyEngineMode(uint8_t mode)
@@ -129,7 +155,7 @@ void CoWorkCard::LatchRoleAtBoot()
 	gShared.statusRole = (role_ == kFollower) ? 1 : 0;
 	roleLatched_ = true;
 	bootKnobX_ = KnobVal(Knob::X);
-	bootKnobMain_ = KnobVal(Knob::Main);
+	bootKnobY_ = KnobVal(Knob::Y);
 	clock_.Reset(cfg_.tempo_bpm_x10);
 }
 
@@ -168,6 +194,8 @@ void CoWorkCard::AdoptBankIfChanged()
 	                      bank_->lead.root, bank_->lead.loop);
 	engine_.SetInstrument(kPartBass, bank_->bass.data, bank_->bass.frames,
 	                      bank_->bass.root, bank_->bass.loop);
+	engine_.SetInstrument(kPartPad, bank_->pad.data, bank_->pad.frames,
+	                      bank_->pad.root, bank_->pad.loop);
 	for (uint32_t i = 0; i < kNumDrumLanes; i++)
 		engine_.SetDrumLane(i, bank_->lane[i].data, bank_->lane[i].frames,
 		                    bank_->lane[i].choke);
@@ -188,6 +216,7 @@ void CoWorkCard::AdoptConfigIfChanged()
 
 	engine_.SetReleaseMs(kPartLead, (int)cfg_.release_lead * 4);
 	engine_.SetReleaseMs(kPartBass, (int)cfg_.release_bass * 4);
+	engine_.SetReleaseMs(kPartPad, (int)cfg_.release_pad * 4);
 	engine_.SetOut2LaneMask(cfg_.out2_lane_mask);
 	if (modeChanged) ApplyEngineMode(cfg_.engine_mode);
 	gShared.statusMode = cfg_.engine_mode;
@@ -212,7 +241,8 @@ void CoWorkCard::ConsumeMidiIn()
 			}
 			switch (ev.status) {
 			case kMidiClock:
-				clock_.OnClock(ev.tUs, seq_.PhaseQ16());
+				clock_.OnClock(ev.tUs, loopLenTicks_ ? masterPhaseQ16_
+				                                     : seq_.PhaseQ16());
 				internalRun_ = false;
 				break;
 			case kMidiStart:
@@ -270,7 +300,7 @@ void CoWorkCard::ConsumeMidiIn()
 		// Live USB-MIDI notes on mapped channels play the engine directly
 		if (type == 0x90 || type == 0x80) {
 			uint8_t part = cfg_.midi_channel_to_part[chan];
-			if (part > 2) continue;
+			if (part > 3) continue;
 			bool on = (type == 0x90) && ev.d2 > 0;
 			if (part == kPartDrums) {
 				if (on && cfg_.engine_mode == 1 && bank_) {
@@ -303,47 +333,96 @@ void CoWorkCard::HandleTransportRequests()
 	}
 }
 
+// Single tap = transport toggle (fires after the double-tap window),
+// double tap = next loaded song, hold ~1 s = engine mode toggle.
+void CoWorkCard::TransportTap()
+{
+	if (role_ == kLeader) {
+		if (running_) {
+			StopTransport();
+			PushMidiOut(kMidiStop, 0, 0, 1);
+		} else {
+			StartTransport(true);
+			PushMidiOut(kMidiStart, 0, 0, 1);
+		}
+	} else {
+		// Follower: explicit internal-clock fallback when no leader
+		if (running_) {
+			StopTransport();
+		} else if (!clock_.HasClock() || clock_.TimedOut(nowUs_)) {
+			internalRun_ = true;
+			seq_.Reset();
+			StartTransport(true);
+		}
+	}
+}
+
 void CoWorkCard::HandleSwitch()
 {
-	Switch sw = SwitchVal();
+	bool down = SwitchVal() == Switch::Down;
 
-	if (sw == Switch::Down) {
-		// Require the switch to have been seen elsewhere first, so a
-		// switch held during power-up doesn't fire a spurious tap.
-		if (!downArmed_) return;
+	if (down && !wasDown_) {
+		// Press start. A press inside the tap window is a double tap;
+		// it fires immediately (no added latency on the second tap).
+		if (downArmed_) {
+			if (tapWindow_ > 0) {
+				tapWindow_ = 0;
+				consumedAsDouble_ = true;
+				AdvanceSong();
+			} else {
+				consumedAsDouble_ = false;
+			}
+		}
+		downCount_ = 0;
+		longPressHandled_ = false;
+	}
+
+	if (down) {
+		// Require the switch to have been seen up first, so a switch
+		// held through power-up doesn't fire a spurious gesture.
+		if (!downArmed_) { wasDown_ = true; return; }
 		downCount_++;
-		if (downCount_ == kLongPressSamples && !longPressHandled_) {
+		if (downCount_ == kLongPressSamples && !longPressHandled_ &&
+		    !consumedAsDouble_) {
 			longPressHandled_ = true;
 			ApplyEngineMode(cfg_.engine_mode ^ 1);
 		}
-		return;
-	}
-
-	downArmed_ = true;
-	if (downCount_ > 0 && !longPressHandled_) {
-		// Short press: transport toggle
-		if (role_ == kLeader) {
-			if (running_) {
-				StopTransport();
-				PushMidiOut(kMidiStop, 0, 0, 1);
-			} else {
-				StartTransport(true);
-				PushMidiOut(kMidiStart, 0, 0, 1);
-			}
-		} else {
-			// Follower: explicit internal-clock fallback when no leader
-			if (running_) {
-				StopTransport();
-			} else if (!clock_.HasClock() ||
-			           clock_.TimedOut(nowUs_)) {
-				internalRun_ = true;
-				seq_.Reset();
-				StartTransport(true);
-			}
+	} else {
+		if (wasDown_ && downArmed_ && !longPressHandled_ &&
+		    !consumedAsDouble_ && downCount_ > 0 &&
+		    downCount_ < kLongPressSamples) {
+			// Short press released: arm the single-tap window
+			tapWindow_ = kDoubleTapSamples;
 		}
+		downArmed_ = true;
+		downCount_ = 0;
+		longPressHandled_ = false;
+		if (tapWindow_ > 0 && --tapWindow_ == 0)
+			TransportTap();
 	}
-	downCount_ = 0;
-	longPressHandled_ = false;
+	wasDown_ = down;
+}
+
+// Loop-roll window lengths, CCW to CW: 1 beat, 2 beats, 1 bar, 2 bars,
+// 4 bars, 8 bars; zone 6 (full CW) = no looping.
+uint32_t CoWorkCard::LoopZoneTicks(int zone) const
+{
+	uint32_t bar = 384; // 4/4 default
+	if (seq_.Loaded()) {
+		const SeqHeader *h = seq_.Header();
+		uint32_t num = h->tsig_num ? h->tsig_num : 4;
+		bar = num * (384u >> h->tsig_denom_log2);
+		if (bar == 0) bar = 384;
+	}
+	switch (zone) {
+	case 0: return 96;        // 1 beat
+	case 1: return 192;       // 2 beats
+	case 2: return bar;
+	case 3: return bar * 2;
+	case 4: return bar * 4;
+	case 5: return bar * 8;
+	default: return 0;        // off
+	}
 }
 
 void CoWorkCard::HandleKnobs()
@@ -360,27 +439,46 @@ void CoWorkCard::HandleKnobs()
 		cfg_.tempo_bpm_x10 = (uint16_t)bpmX10;
 	}
 
-	// Y: song slot select, bar-latched while running
-	if (bank_ && bank_->songSlots > 0) {
-		uint32_t slots = bank_->songSlots;
-		uint32_t sel = ((uint32_t)KnobVal(Knob::Y) * slots) / 4096u;
-		if (sel >= slots) sel = slots - 1;
-		if (sel != gShared.statusSong && sel != pendingSong_) {
-			if (running_) pendingSong_ = (uint8_t)sel;
-			else AttachSong(sel);
+	// Y: master volume, config value until the knob moves
+	int32_t ky = KnobVal(Knob::Y);
+	if (!volKnobPicked_ && bootKnobY_ >= 0 &&
+	    (ky - bootKnobY_ > kKnobPickup || bootKnobY_ - ky > kKnobPickup))
+		volKnobPicked_ = true;
+
+	// Main: loop-roll length (absolute — full CW = off), with hysteresis
+	// so a knob resting on a zone boundary doesn't flutter.
+	int32_t km = KnobVal(Knob::Main);
+	int zone = (int)((km * 7) / 4096);
+	if (zone > 6) zone = 6;
+	if (zone != loopZone_) {
+		int32_t lo = zone * 4096 / 7;
+		int32_t hi = (zone + 1) * 4096 / 7;
+		if (loopZone_ < 0 || (km > lo + 40 && km < hi - 40)) {
+			loopZone_ = zone;
+			uint32_t len = LoopZoneTicks(zone);
+			if (len == 0) {
+				// Disengage: jump back to where the song would be
+				if (loopLenTicks_ && seq_.Loaded() && running_) {
+					engine_.ReleaseAll();
+					ClearGates();
+					seq_.SeekTick(masterPhaseQ16_);
+				}
+				loopLenTicks_ = 0;
+			} else {
+				if (loopLenTicks_ == 0)
+					masterPhaseQ16_ = seq_.PhaseQ16(); // engaging
+				loopLenTicks_ = len;
+				loopAnchor_ = (seq_.Tick() / len) * len;
+			}
 		}
 	}
-
-	// Main: master volume, config value until the knob moves
-	int32_t km = KnobVal(Knob::Main);
-	if (!volKnobPicked_ && bootKnobMain_ >= 0 &&
-	    (km - bootKnobMain_ > kKnobPickup || bootKnobMain_ - km > kKnobPickup))
-		volKnobPicked_ = true;
 }
 
 void CoWorkCard::AdvanceSequencer()
 {
 	if (!running_ || !seq_.Loaded()) return;
+
+	bool looping = loopLenTicks_ > 0;
 
 	if (role_ == kLeader || internalRun_) {
 		uint32_t inc = (role_ == kLeader)
@@ -388,7 +486,8 @@ void CoWorkCard::AdvanceSequencer()
 			: Sequencer::TickIncForBpmX10(cfg_.tempo_bpm_x10);
 		seq_.SetTickIncQ16(inc);
 	} else {
-		// Follower on external clock
+		// Follower on external clock. While the loop-roll is engaged the
+		// DLL tracks the free-running master phase, not the rolled one.
 		if (clock_.TimedOut(nowUs_)) {
 			StopTransport();
 			return;
@@ -396,7 +495,13 @@ void CoWorkCard::AdvanceSequencer()
 		if (clock_.NeedsResync()) {
 			engine_.ReleaseAll();
 			ClearGates();
-			seq_.SeekTick(clock_.TargetPhaseQ16());
+			if (looping) {
+				masterPhaseQ16_ = clock_.TargetPhaseQ16();
+				loopAnchor_ = ((uint32_t)(masterPhaseQ16_ >> 16) / loopLenTicks_) * loopLenTicks_;
+				seq_.SeekTick(masterPhaseQ16_);
+			} else {
+				seq_.SeekTick(clock_.TargetPhaseQ16());
+			}
 			clock_.OnResync();
 		}
 		seq_.SetTickIncQ16(clock_.TickIncQ16());
@@ -404,20 +509,42 @@ void CoWorkCard::AdvanceSequencer()
 
 	uint32_t adv = seq_.Advance(*this);
 
-	// Leader emits MIDI clock at 24 PPQN = every 4th sequencer tick.
+	// Loop-roll overlay: the dispatch position wraps a window while the
+	// master phase keeps running (and keeps its place in the song loop).
+	if (looping) {
+		masterPhaseQ16_ += seq_.TickIncQ16();
+		const SeqHeader *h = seq_.Header();
+		if (h->flags & 1) {
+			uint32_t end = h->loop_end_tick, start = h->loop_start_tick;
+			if ((uint32_t)(masterPhaseQ16_ >> 16) >= end && end > start)
+				masterPhaseQ16_ -= ((uint64_t)(end - start)) << 16;
+		}
+		if (adv & Sequencer::kAdvWrapped) {
+			// The song's own loop wrapped underneath the roll window
+			loopAnchor_ = (seq_.Tick() / loopLenTicks_) * loopLenTicks_;
+		} else if (seq_.Tick() >= loopAnchor_ + loopLenTicks_) {
+			engine_.ReleaseAll();
+			ClearGates();
+			seq_.SeekTick(((uint64_t)loopAnchor_ << 16) |
+			              (seq_.PhaseQ16() & 0xFFFF));
+		}
+	}
+
+	// Leader emits MIDI clock at 24 PPQN = every 4th tick of the MASTER
+	// position, so a linked follower stays steady through a loop-roll.
 	// Checked every sample (not just on tick crossings) so the very first
 	// clock — tick 0, which marks the downbeat per the MIDI spec — goes
 	// out on the first running sample after Start.
-	uint32_t tick = seq_.Tick();
-	if (role_ == kLeader && (tick & 3) == 0 && tick != lastClockTick_) {
-		lastClockTick_ = tick;
+	uint32_t clockTick = looping ? (uint32_t)(masterPhaseQ16_ >> 16) : seq_.Tick();
+	if (role_ == kLeader && (clockTick & 3) == 0 && clockTick != lastClockTick_) {
+		lastClockTick_ = clockTick;
 		PushMidiOut(kMidiClock, 0, 0, 1);
 	}
 
 	if (adv & Sequencer::kAdvTick) {
-		// Beat LED
-		if (tick % kPPQN == 0) {
-			uint32_t quarters = tick / kPPQN;
+		// Beat LED follows the master position
+		if (clockTick % kPPQN == 0) {
+			uint32_t quarters = clockTick / kPPQN;
 			uint32_t perBar = seq_.Loaded() ? seq_.Header()->tsig_num : 4;
 			if (perBar == 0) perBar = 4;
 			beatLevel_ = (quarters % perBar == 0) ? 4095 : 1600;
@@ -436,9 +563,9 @@ void CoWorkCard::RenderAndOutput()
 	int32_t a = 0, b = 0;
 	engine_.Render(a, b);
 
-	// Master volume: knob (after pickup) or config default. Voice sums are
-	// ~16-bit; >>4 lands in the 12-bit DAC range.
-	int32_t vol = volKnobPicked_ ? KnobVal(Knob::Main)
+	// Master volume: Y knob (after pickup) or config default. Voice sums
+	// are ~16-bit; >>4 lands in the 12-bit DAC range.
+	int32_t vol = volKnobPicked_ ? KnobVal(Knob::Y)
 	                             : ((int32_t)cfg_.master_vol * 4096) / 255;
 	a = (a * vol) >> 16;
 	b = (b * vol) >> 16;

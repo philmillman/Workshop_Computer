@@ -11,13 +11,14 @@ namespace cowork {
 
 constexpr uint32_t kBankMagic = 0x42535743u; // "CWSB"
 constexpr uint16_t kBankVersion = 1;
-constexpr uint16_t kBankSlots = 18; // 0 lead, 1 bass, 2..17 drums
+constexpr uint16_t kBankSlots = 19; // 0 lead, 1 bass, 2 pad, 3..18 drums
 constexpr uint32_t kBankSampleRate = 24000;
 constexpr uint32_t kNumDrumLanes = 16;
 
 constexpr uint32_t kSlotLead = 0;
 constexpr uint32_t kSlotBass = 1;
-constexpr uint32_t kSlotDrum0 = 2;
+constexpr uint32_t kSlotPad = 2;
+constexpr uint32_t kSlotDrum0 = 3;
 
 struct __attribute__((packed)) SampleSlot {
 	char     name[12];

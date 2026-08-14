@@ -43,8 +43,8 @@ static void TestMelodicEnvelopeAndLevel()
 	}
 	// Attack starts near zero
 	CHECK(first < 600);
-	// Sustain level: 16000 * (4064/4096) * (1450/4096) ~= 5619
-	CHECK(a > 5000 && a < 6200);
+	// Sustain level: 16000 * (4064/4096) * (2048/4096) ~= 7937
+	CHECK(a > 7300 && a < 8600);
 	CHECK_EQ(b, 0); // nothing on the bass bus
 
 	// Release: 60 ms default -> gone within ~70 ms
@@ -82,15 +82,45 @@ static void TestAllocationCaps()
 	e.SetPercussive(false);
 	e.SetInstrument(kPartLead, pcm.data(), (uint32_t)pcm.size(), 60, true);
 	e.SetInstrument(kPartBass, pcm.data(), (uint32_t)pcm.size(), 36, true);
+	e.SetInstrument(kPartPad, pcm.data(), (uint32_t)pcm.size(), 60, true);
 
+	// Duophonic lead: extra notes steal within the part
 	for (int n = 0; n < 10; n++) e.NoteOn(kPartLead, 40 + n, 100);
 	CHECK(e.ActiveVoices() <= Engine::kMaxLead);
 
+	// Monophonic bass adds at most one more voice
 	for (int n = 0; n < 6; n++) e.NoteOn(kPartBass, 30 + n, 100);
+	CHECK(e.ActiveVoices() <= Engine::kMaxLead + Engine::kMaxBass);
+
+	// 3-voice pad on top; total held stays within lead+bass+pad = 6
+	for (int n = 0; n < 5; n++) e.NoteOn(kPartPad, 60 + n, 90);
+	CHECK(e.ActiveVoices() <= Engine::kMaxLead + Engine::kMaxBass + Engine::kMaxPad);
 	CHECK(e.ActiveVoices() <= Engine::kMaxVoices);
 
 	e.KillAll();
 	CHECK_EQ(e.ActiveVoices(), 0);
+}
+
+static void TestPadRoutingAndCap()
+{
+	auto pcm = MakeConst(24000, 8000);
+	Engine e;
+	e.SetPercussive(false);
+	e.SetInstrument(kPartPad, pcm.data(), (uint32_t)pcm.size(), 60, true);
+
+	// A full triad holds three voices; a fourth note steals one
+	e.NoteOn(kPartPad, 60, 100);
+	e.NoteOn(kPartPad, 63, 100);
+	e.NoteOn(kPartPad, 67, 100);
+	CHECK_EQ(e.ActiveVoices(), 3);
+	e.NoteOn(kPartPad, 70, 100);
+	CHECK_EQ(e.ActiveVoices(), 3);
+
+	// Pad renders on out A, nothing on the bass bus
+	int32_t a = 0, b = 0;
+	for (int i = 0; i < 200; i++) e.Render(a, b);
+	CHECK(a > 0);
+	CHECK_EQ(b, 0);
 }
 
 static void TestDrumsAndChoke()
@@ -172,6 +202,7 @@ int main()
 	TestMelodicEnvelopeAndLevel();
 	TestPitchConsumptionRate();
 	TestAllocationCaps();
+	TestPadRoutingAndCap();
 	TestDrumsAndChoke();
 	TestOut2Submix();
 	TestMelodicLoopSustain();

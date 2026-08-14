@@ -3,9 +3,9 @@
 **A dual-module sample sequencer for the Workshop System Computer.**
 
 CoWork turns one or two Computers into a sample groovebox driven by your own
-MIDI files and sounds. One module plays **melodic** parts (a pitched lead and
-bass instrument, with v/oct + gate outputs); the other plays **percussive**
-parts (a 16-pad drum kit with trigger outputs). Link the two front-panel USB
+MIDI files and sounds. One module plays **melodic** parts (a duophonic lead,
+a 3-voice chord pad and a mono bass, with v/oct + gate outputs); the other
+plays **percussive** parts (a 16-pad drum kit with trigger outputs). Link the two front-panel USB
 ports and one module leads — sending MIDI clock, start and stop — while the
 other follows, sample-locked. Each module also works entirely on its own.
 
@@ -54,16 +54,17 @@ Notes:
 |---|---|
 | Z switch at boot | Up = leader, Middle = follower |
 | Z tap (short press down) | Transport start/stop (leader); internal-clock start/stop (follower without clock) |
+| Z double tap | Next loaded song, skipping empty slots (lands at the loop point while running) |
 | Z hold ~1 s | Toggle melodic / percussive engine |
-| Main knob | Master volume |
+| Main knob | **Loop roll**: loops the playing sequence — CCW to CW: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; full CW = no looping. The song position (and the leader's clock out) keeps running underneath, so turning it back CW drops you where the song would have been |
 | X knob | Tempo 40–240 BPM (leader; pickup — the song's own tempo until moved). Follower: internal fallback tempo |
-| Y knob | Song slot select (applied at the loop point while running) |
+| Y knob | Master volume |
 
 ## Patching
 
 | Jack | Melodic mode | Percussive mode |
 |---|---|---|
-| Audio out 1 | Lead mix | Full kit mix |
+| Audio out 1 | Lead + pad mix | Full kit mix |
 | Audio out 2 | Bass mix | Lane submix (default: kick, configurable) |
 | CV out 1 | Lead v/oct (calibrated) | Accent (last-hit velocity) |
 | CV out 2 | Bass v/oct (calibrated) | Velocity of a chosen lane |
@@ -96,10 +97,10 @@ stopped automatically; uploads are CRC32-verified both ways). Configuration
 changes (routing, releases, note maps) apply live.
 
 - **Songs**: drop `.mid` (format 0/1). Map each MIDI channel to Lead, Bass,
-  Drums, or Ignore — channel 10 is auto-suggested as drums. Tempo maps are
-  preserved. One slot holds ~8000 events.
-- **Instruments**: lead + bass each take one sample with a root note and
-  optional sustain loop.
+  Pad, Drums, or Ignore — channel 10 is auto-suggested as drums. Tempo maps
+  are preserved. One slot holds ~8000 events.
+- **Instruments**: lead, bass and pad each take one sample with a root note
+  and optional sustain loop.
 - **Drum kit**: 16 pads, GM-style default note map (editable), choke groups
   for open/closed hats.
 - Samples are converted to 16-bit mono 24 kHz, trimmed and normalized.
@@ -108,7 +109,8 @@ changes (routing, releases, note maps) apply live.
 ## Technical notes
 
 - 8-voice sample engine at 48 kHz on core 0 (192 MHz), int32 fixed-point;
-  melodic mode splits voices lead/bass, percussive plays 8-voice one-shots.
+  melodic mode allocates a duophonic lead, 3-voice pad and mono bass
+  (stealing within each part), percussive plays 8-voice one-shots.
 - Sequences play from flash as pre-baked 96 PPQN event streams — the browser
   converts SMF; the firmware never parses `.mid`.
 - Core 1 owns USB (TinyUSB dual-role: composite MIDI+CDC device, or MIDI

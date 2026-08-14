@@ -1,5 +1,5 @@
 // Generates the example content in this folder:
-//   midi/*.mid      — test songs (lead ch1, bass ch2, drums ch10)
+//   midi/*.mid      — test songs (lead ch1, bass ch2, pad ch3, drums ch10)
 //   samples/*.wav   — a synthesized drum kit + lead/bass instruments
 //                     (16-bit mono 24 kHz, the card's native format)
 //
@@ -216,6 +216,21 @@ function instruments() {
       return Math.tanh(raw * 1.6) * env * fade;
     }));
   }
+
+  // Pad: soft detuned triangle stack, slow attack, steady sustain for the
+  // 3-voice chord part. Root C4 (60).
+  {
+    const f0 = 261.63;
+    const tri = x => 2 * Math.abs(2 * (x - Math.floor(x + 0.5))) - 1;
+    writeWav("pad_c4.wav", render(1.2, t => {
+      let ssum = 0;
+      for (const det of [0.996, 1.0, 1.005])
+        ssum += tri(f0 * det * t) + 0.3 * tri(f0 * det * 2 * t);
+      const env = Math.min(1, t / 0.08);
+      const fade = t > 1.14 ? (1.2 - t) / 0.06 : 1;
+      return ssum * 0.22 * env * fade;
+    }));
+  }
 }
 
 // ============================================================ MIDI writing
@@ -295,6 +310,13 @@ function songFirstTest() {
   for (let bar = 0; bar < 2; bar++)
     roots.forEach((n, i) => bass.note(bar * 4 * B + i * B, 1, n, 100, B - 40));
 
+  const pad = new Track();
+  pad.name("Pad");
+  const chords1 = [[60, 64, 67], [57, 60, 64]]; // C, Am
+  chords1.forEach((chord, bar) => {
+    for (const n of chord) pad.note(bar * 4 * B, 2, n, 72, 4 * B - 40);
+  });
+
   const drums = new Track();
   drums.name("Drums");
   for (let bar = 0; bar < 2; bar++) {
@@ -304,7 +326,7 @@ function songFirstTest() {
     drums.note(base + 3 * B, 9, SN, 110, S);
     for (let e = 0; e < 8; e++) drums.note(base + e * (B / 2), 9, CH, e % 2 ? 70 : 90, S / 2);
   }
-  writeSMF("01_first_test.mid", [meta, lead, bass, drums]);
+  writeSMF("01_first_test.mid", [meta, lead, bass, pad, drums]);
 }
 
 // ---- Song 2: 4-bar groove, 100 BPM, velocities + choke test (open/closed hats)
@@ -338,6 +360,13 @@ function songGroove() {
       bass.note(Math.round((bar * 4 + beat) * B), 1, bar === 3 && beat === 3.5 ? n + 12 : n, v, Math.round(len * B) - 20);
     }
 
+  const pad = new Track();
+  pad.name("Pad");
+  const chords2 = [[60, 63, 67], [56, 60, 63], [58, 62, 65], [60, 63, 67]]; // Cm, Ab, Bb, Cm
+  chords2.forEach((chord, bar) => {
+    for (const n of chord) pad.note(bar * 4 * B, 2, n, 64, 4 * B - 60);
+  });
+
   const drums = new Track();
   drums.name("Drums");
   for (let bar = 0; bar < 4; bar++) {
@@ -369,7 +398,7 @@ function songGroove() {
       drums.note(base + 3.875 * B, 9, CB, 80, S / 2);
     }
   }
-  writeSMF("02_groove.mid", [meta, lead, bass, drums]);
+  writeSMF("02_groove.mid", [meta, lead, bass, pad, drums]);
 }
 
 // ---- Song 3: tempo-map test, 8 bars accelerating 90 -> 132 BPM
@@ -395,6 +424,13 @@ function songTempoRide() {
     for (let q = 0; q < 4; q++)
       bass.note((bar * 4 + q) * B, 1, q % 2 ? 48 : 36, 95, B / 2);
 
+  const pad = new Track();
+  pad.name("Pad");
+  for (let half = 0; half < 4; half++) {
+    const chord = half % 2 ? [56, 60, 63] : [60, 63, 67]; // Ab / Cm
+    for (const n of chord) pad.note(half * 8 * B, 2, n, 68, 8 * B - 60);
+  }
+
   const drums = new Track();
   drums.name("Drums");
   for (let bar = 0; bar < 8; bar++) {
@@ -407,7 +443,7 @@ function songTempoRide() {
     drums.note(base + 3 * B, 9, SN, 110, S);
     if (bar === 7) drums.note(base + 3.5 * B, 9, RD, 100, B / 2);
   }
-  writeSMF("03_tempo_ride.mid", [meta, lead, bass, drums]);
+  writeSMF("03_tempo_ride.mid", [meta, lead, bass, pad, drums]);
 }
 
 // ============================================================ run

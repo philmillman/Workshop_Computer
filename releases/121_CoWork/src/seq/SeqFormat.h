@@ -24,6 +24,7 @@ enum Part : uint8_t {
 	kPartLead  = 0,
 	kPartBass  = 1,
 	kPartDrums = 2,
+	kPartPad   = 3,
 };
 
 struct __attribute__((packed)) SeqEvent {

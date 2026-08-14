@@ -34,7 +34,7 @@ struct BankInfo {
 		bool valid = false;
 	};
 
-	Melodic lead, bass;
+	Melodic lead, bass, pad;
 	Lane lane[kNumDrumLanes];
 	uint8_t noteToLane[128]; // 0xFF = unmapped
 	Song song[8];
@@ -45,6 +45,7 @@ struct BankInfo {
 	{
 		lead = Melodic{};
 		bass = Melodic{};
+		pad = Melodic{};
 		for (auto &l : lane) l = Lane{};
 		memset(noteToLane, 0xFF, sizeof(noteToLane));
 		for (auto &s : song) s = Song{};
@@ -79,8 +80,9 @@ inline void BuildBankInfo(BankInfo &out, const uint8_t *flashBase, const FlashMa
 		if (!SlotIsPopulated(s, bankBytes)) continue;
 
 		const int16_t *pcm = reinterpret_cast<const int16_t *>(flashBase + map.bankOff + s.offset);
-		if (i == kSlotLead || i == kSlotBass) {
-			BankInfo::Melodic &m = (i == kSlotLead) ? out.lead : out.bass;
+		if (i == kSlotLead || i == kSlotBass || i == kSlotPad) {
+			BankInfo::Melodic &m = (i == kSlotLead) ? out.lead
+			                     : (i == kSlotBass) ? out.bass : out.pad;
 			m.data = pcm;
 			m.frames = s.length_frames;
 			m.root = (s.root_note <= 127) ? s.root_note : 60;

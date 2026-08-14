@@ -60,8 +60,10 @@ static void TestConfigDefaults()
 	CHECK_EQ(c.magic, kConfigMagic);
 	CHECK_EQ(c.tempo_bpm_x10, 1200);
 	CHECK_EQ(c.midi_channel_to_part[0], 0);
+	CHECK_EQ(c.midi_channel_to_part[2], 3);  // ch3 -> pad
 	CHECK_EQ(c.midi_channel_to_part[9], 2);
 	CHECK_EQ(c.midi_channel_to_part[3], 0xFF);
+	CHECK_EQ(c.release_pad, 60);
 
 	c.swing = 90;
 	c.active_song = 200;
@@ -107,6 +109,7 @@ static void TestBankInfoParsing()
 	for (auto &s : slots) { s.length_frames = 0; s.offset = 0xFFFFFFFF; }
 
 	slots[kSlotLead] = SampleSlot{ "lead", 0x1000, 1000, 24000, 60, 0xFF, 1, 0, 0 };
+	slots[kSlotPad] = SampleSlot{ "pad", 0x4000, 800, 24000, 62, 0xFF, 1, 0, 0 };
 	slots[kSlotDrum0] = SampleSlot{ "kick", 0x2000, 500, 24000, 0xFF, 36, 0, 0, 0 };
 	// Bad slot: unaligned offset -> skipped
 	slots[kSlotDrum0 + 1] = SampleSlot{ "bad", 0x2100, 500, 24000, 0xFF, 38, 0, 0, 0 };
@@ -126,6 +129,9 @@ static void TestBankInfoParsing()
 	CHECK(info.lead.data != nullptr);
 	CHECK_EQ(info.lead.frames, 1000u);
 	CHECK(info.lead.loop);
+	CHECK(info.pad.data != nullptr);
+	CHECK_EQ(info.pad.frames, 800u);
+	CHECK_EQ(info.pad.root, 62);
 	CHECK(info.lane[0].data != nullptr);
 	CHECK_EQ(info.noteToLane[36], 0);
 	CHECK_EQ(info.noteToLane[38], 0xFF); // bad slot skipped

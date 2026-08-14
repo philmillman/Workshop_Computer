@@ -35,8 +35,8 @@ struct __attribute__((packed)) Config {
 	uint8_t  release_lead;     // ms/4
 	uint8_t  release_bass;     // ms/4
 	uint8_t  master_vol;       // 0..255
-	uint8_t  reserved0;
-	uint8_t  midi_channel_to_part[16]; // 0/1/2 or 0xFF ignore
+	uint8_t  release_pad;      // ms/4
+	uint8_t  midi_channel_to_part[16]; // 0 lead/1 bass/2 drums/3 pad or 0xFF ignore
 	uint8_t  reserved[86];
 	uint32_t crc32;            // over bytes 0..123
 };
@@ -60,10 +60,11 @@ inline void ConfigSetDefaults(Config &c)
 	c.release_lead = 15;     // 60 ms
 	c.release_bass = 30;     // 120 ms
 	c.master_vol = 200;
-	c.reserved0 = 0;
+	c.release_pad = 60;      // 240 ms
 	memset(c.midi_channel_to_part, 0xFF, sizeof(c.midi_channel_to_part));
 	c.midi_channel_to_part[0] = 0;  // ch1 -> lead
 	c.midi_channel_to_part[1] = 1;  // ch2 -> bass
+	c.midi_channel_to_part[2] = 3;  // ch3 -> pad
 	c.midi_channel_to_part[9] = 2;  // ch10 -> drums
 }
 
@@ -80,7 +81,7 @@ inline void ConfigSanitize(Config &c, uint32_t songSlots)
 	if (c.pulse2_lane > 15) c.pulse2_lane = 2;
 	if (c.cv2_lane > 15) c.cv2_lane = 0;
 	for (int i = 0; i < 16; i++)
-		if (c.midi_channel_to_part[i] > 2 && c.midi_channel_to_part[i] != 0xFF)
+		if (c.midi_channel_to_part[i] > 3 && c.midi_channel_to_part[i] != 0xFF)
 			c.midi_channel_to_part[i] = 0xFF;
 }
 

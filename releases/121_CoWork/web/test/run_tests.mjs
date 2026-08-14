@@ -75,6 +75,21 @@ test("channel summary and auto-suggest", () => {
 });
 
 // ---------------------------------------------------------------- convert
+test("auto-suggest assigns a pad with three melodic channels", () => {
+  const smf = fx.buildSMF({ format: 1, division: 96, tracks: [
+    fx.buildTrack([{ delta: 0, kind: "on", ch: 0, note: 72 }, { delta: 48, kind: "off", ch: 0, note: 72 },
+                   { delta: 0, kind: "on", ch: 0, note: 74 }, { delta: 48, kind: "off", ch: 0, note: 74 },
+                   { delta: 0, kind: "on", ch: 0, note: 76 }, { delta: 48, kind: "off", ch: 0, note: 76 }]),
+    fx.buildTrack([{ delta: 0, kind: "on", ch: 1, note: 36 }, { delta: 96, kind: "off", ch: 1, note: 36 }]),
+    fx.buildTrack([{ delta: 0, kind: "on", ch: 2, note: 60 }, { delta: 96, kind: "off", ch: 2, note: 60 },
+                   { delta: 0, kind: "on", ch: 2, note: 63 }, { delta: 96, kind: "off", ch: 2, note: 63 }]),
+  ] });
+  const map = C.suggestChannelMap(C.smfChannelSummary(C.parseSMF(smf)));
+  assert.equal(map[1], 1); // lowest average pitch -> bass
+  assert.equal(map[0], 0); // densest -> lead
+  assert.equal(map[2], 3); // remaining -> pad
+});
+
 test("convert rescales ticks and keeps tempo events", () => {
   const p = C.parseSMF(fx.format1MultiTrack()); // division 480
   const conv = C.convertSMF(p, { 0: 0, 1: 1, 9: 2 });
@@ -156,28 +171,37 @@ test("config encode/decode round-trip", () => {
 
 // ---------------------------------------------------------------- CWSB codec
 test("bank directory round-trip and allocator", () => {
-  const slots = new Array(18).fill(null).map(() => ({}));
+  const slots = new Array(19).fill(null).map(() => ({}));
   slots[0] = { name: "lead", offset: 0x1000, lengthFrames: 24000, root: 60, assignNote: 0xFF, flags: 1, choke: 0, dataCrc: 123 };
-  slots[2] = { name: "kick", offset: 0xFFFFFFFF, lengthFrames: 12000, root: 0xFF, assignNote: 36, choke: 0, dataCrc: 45, dirty: true };
-  slots[3] = { name: "hat", offset: 0xFFFFFFFF, lengthFrames: 6000, root: 0xFF, assignNote: 42, choke: 1, dataCrc: 46, dirty: true };
+  slots[2] = { name: "pad", offset: 0xFFFFFFFF, lengthFrames: 8000, root: 62, assignNote: 0xFF, flags: 1, choke: 0, dataCrc: 44, dirty: true };
+  slots[3] = { name: "kick", offset: 0xFFFFFFFF, lengthFrames: 12000, root: 0xFF, assignNote: 36, choke: 0, dataCrc: 45, dirty: true };
+  slots[4] = { name: "hat", offset: 0xFFFFFFFF, lengthFrames: 6000, root: 0xFF, assignNote: 42, choke: 1, dataCrc: 46, dirty: true };
 
   const plan = C.allocateBank(slots, 1024 * 1024);
   assert.ok(plan);
-  // lead is fixed at 0x1000 (48000 bytes -> 12 sectors -> ends 0xD000)
-  assert.equal(slots[2].offset, 0xD000);
-  assert.equal(slots[3].offset % 4096, 0);
-  assert.ok(slots[3].offset >= 0xD000 + Math.ceil(12000 * 2 / 4096) * 4096);
+  // lead is fixed at 0x1000 (48000 bytes -> 12 sectors -> ends 0xD000);
+  // dirty slots pack after it, 4K aligned, without overlapping
+  const ranges = [slots[2], slots[3], slots[4]].map(sl =>
+    [sl.offset, sl.offset + Math.ceil(sl.lengthFrames * 2 / 4096) * 4096]);
+  for (const [a] of ranges) {
+    assert.ok(a >= 0xD000);
+    assert.equal(a % 4096, 0);
+  }
+  ranges.sort((x, y) => x[0] - y[0]);
+  for (let i = 1; i < ranges.length; i++)
+    assert.ok(ranges[i][0] >= ranges[i - 1][1]);
 
   const dir = C.encodeBankDir(slots, plan.used);
   assert.equal(dir.length, 4096);
   const dec = C.decodeBankDir(dir);
   assert.equal(dec.slots[0].name, "lead");
   assert.equal(dec.slots[0].flags & 1, 1);
-  assert.equal(dec.slots[2].assignNote, 36);
-  assert.equal(dec.slots[3].choke, 1);
+  assert.equal(dec.slots[2].root, 62);
+  assert.equal(dec.slots[3].assignNote, 36);
+  assert.equal(dec.slots[4].choke, 1);
 
   // Doesn't fit -> null
-  const big = new Array(18).fill(null).map(() => ({}));
+  const big = new Array(19).fill(null).map(() => ({}));
   big[2] = { lengthFrames: 10 * 1024 * 1024, offset: 0xFFFFFFFF, dirty: true };
   assert.equal(C.allocateBank(big, 1024 * 1024), null);
 });

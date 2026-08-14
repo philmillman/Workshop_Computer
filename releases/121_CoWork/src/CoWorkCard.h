@@ -37,6 +37,7 @@ public:
 private:
 	static constexpr uint32_t kBootSettleSamples = 480;   // 10 ms
 	static constexpr uint32_t kLongPressSamples = 48000;  // 1 s
+	static constexpr uint32_t kDoubleTapSamples = 16800;  // 350 ms window
 	static constexpr uint32_t kDrumPulseSamples = 480;    // 10 ms triggers
 	static constexpr int32_t kKnobPickup = 100;           // counts
 
@@ -59,8 +60,11 @@ private:
 	void StartTransport(bool resetPosition);
 	void StopTransport();
 	void AttachSong(uint32_t slot);
+	void AdvanceSong();            // double-tap: next loaded slot
 	void ApplyEngineMode(uint8_t mode);
 	void ClearGates();
+	void TransportTap();           // single-tap action
+	uint32_t LoopZoneTicks(int zone) const;
 
 	void PushMidiOut(uint8_t status, uint8_t d1, uint8_t d2, uint8_t len)
 	{
@@ -90,17 +94,29 @@ private:
 	bool internalRun_ = false;     // follower running on internal clock
 	uint32_t tempoUspq_ = 500000;  // current file/live tempo (leader)
 	bool tempoKnobPicked_ = false;
-	bool volKnobPicked_ = false;
+	bool volKnobPicked_ = false;   // Y knob (volume)
 	int32_t bootKnobX_ = -1;
-	int32_t bootKnobMain_ = -1;
+	int32_t bootKnobY_ = -1;
 	uint32_t lastStopUs_ = 0;      // DAW loop-wrap debounce
 	uint8_t pendingSong_ = 0xFF;
 	uint32_t lastClockTick_ = 0xFFFFFFFF; // leader 0xF8 dedup (incl. tick 0)
+
+	// -- loop-roll (Main knob) ----------------------------------------
+	// While engaged, the dispatch position loops a window while
+	// masterPhaseQ16_ keeps running underneath (it also drives the
+	// leader's clock output so the link stays steady).
+	int loopZone_ = -1;            // 0..5 = lengths, 6 = off
+	uint32_t loopLenTicks_ = 0;    // 0 = off
+	uint32_t loopAnchor_ = 0;      // window start tick
+	uint64_t masterPhaseQ16_ = 0;
 
 	// -- switch -------------------------------------------------------
 	uint32_t downCount_ = 0;
 	bool longPressHandled_ = false;
 	bool downArmed_ = false;       // ignore a switch held from boot
+	bool wasDown_ = false;
+	bool consumedAsDouble_ = false;
+	uint32_t tapWindow_ = 0;       // pending single-tap countdown
 
 	// -- gates / CV state ---------------------------------------------
 	int leadGate_ = 0;

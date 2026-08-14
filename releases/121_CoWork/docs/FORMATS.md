@@ -60,7 +60,7 @@ Empty slot = erased flash (magic reads `0xFFFFFFFF`).
 |-----|------|-------|--------------------------------------------------------------|
 | 0   | 4    | tick  | absolute, 96 PPQN, non-decreasing                            |
 | 4   | 1    | type  | `0x00` NOTE_OFF, `0x01` NOTE_ON, `0x02` TEMPO, `0x7F` END    |
-| 5   | 1    | part  | `0` lead, `1` bass, `2` drums — TEMPO: µs/qn bits 23..16     |
+| 5   | 1    | part  | `0` lead, `1` bass, `2` drums, `3` pad — TEMPO: µs/qn bits 23..16 |
 | 6   | 1    | d1    | MIDI note 0–127 — TEMPO: µs/qn bits 15..8                    |
 | 7   | 1    | d2    | velocity 1–127 (ON) / 0 (OFF) — TEMPO: µs/qn bits 7..0       |
 
@@ -84,7 +84,7 @@ The firmware only validates and plays.
 |-----|------|-----------------|-------------------------------------------|
 | 0   | 4    | magic           | `"CWSB"` = u32 `0x42535743`                |
 | 4   | 2    | version         | 1                                          |
-| 6   | 2    | slot_count      | 18                                         |
+| 6   | 2    | slot_count      | 19                                         |
 | 8   | 4    | sample_rate     | 24000                                      |
 | 12  | 4    | data_bytes_used | UI usage display                           |
 | 16  | 4    | dir_crc32       | CRC32 over the 18 × 32-byte entries        |
@@ -92,7 +92,8 @@ The firmware only validates and plays.
 
 ### Slot entry (32 bytes each, at 32 + slot × 32)
 
-Slot 0 = LEAD instrument, slot 1 = BASS instrument, slots 2–17 = DRUM 1–16.
+Slot 0 = LEAD instrument, slot 1 = BASS instrument, slot 2 = PAD instrument,
+slots 3–18 = DRUM 1–16.
 
 | Off | Size | Field         | Notes                                              |
 |-----|------|---------------|-----------------------------------------------------|
@@ -110,14 +111,14 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 
 | Slot | Name       | Note | Choke | Slot | Name       | Note | Choke |
 |------|------------|------|-------|------|------------|------|-------|
-| 2    | Kick       | 36   | –     | 10   | Mid Tom    | 45   | –     |
-| 3    | Rim        | 37   | –     | 11   | Hi Tom     | 48   | –     |
-| 4    | Snare      | 38   | –     | 12   | Crash      | 49   | –     |
-| 5    | Clap       | 39   | –     | 13   | Ride       | 51   | –     |
-| 6    | Closed Hat | 42   | 1     | 14   | Tambourine | 54   | –     |
-| 7    | Pedal Hat  | 44   | 1     | 15   | Cowbell    | 56   | –     |
-| 8    | Open Hat   | 46   | 1     | 16   | Shaker     | 70   | –     |
-| 9    | Low Tom    | 41   | –     | 17   | Clave      | 75   | –     |
+| 3    | Kick       | 36   | –     | 11   | Mid Tom    | 45   | –     |
+| 4    | Rim        | 37   | –     | 12   | Hi Tom     | 48   | –     |
+| 5    | Snare      | 38   | –     | 13   | Crash      | 49   | –     |
+| 6    | Clap       | 39   | –     | 14   | Ride       | 51   | –     |
+| 7    | Closed Hat | 42   | 1     | 15   | Tambourine | 54   | –     |
+| 8    | Pedal Hat  | 44   | 1     | 16   | Cowbell    | 56   | –     |
+| 9    | Open Hat   | 46   | 1     | 17   | Shaker     | 70   | –     |
+| 10   | Low Tom    | 41   | –     | 18   | Clave      | 75   | –     |
 
 ## 4. Config blob (`CWCF`, 128 bytes, stored in the config sector)
 
@@ -137,9 +138,9 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 | 16  | 2    | out2_lane_mask           | lanes summed on AudioOut2 (percussive); default `0x0001` |
 | 18  | 1    | release_lead             | ms/4 (0–255 → 0–1020 ms); default 15 (60 ms)   |
 | 19  | 1    | release_bass             | default 30 (120 ms)                            |
-| 20  | 1    | master_vol               | 0–255 boot default; Main knob overrides live   |
-| 21  | 1    | reserved                 |                                                |
-| 22  | 16   | midi_channel_to_part[16] | live USB-MIDI: 0 lead, 1 bass, 2 drums, 0xFF ignore. Default: ch1→0, ch2→1, ch10→2 |
+| 20  | 1    | master_vol               | 0–255 boot default; Y knob overrides live      |
+| 21  | 1    | release_pad              | ms/4; default 60 (240 ms)                      |
+| 22  | 16   | midi_channel_to_part[16] | live USB-MIDI: 0 lead, 1 bass, 2 drums, 3 pad, 0xFF ignore. Default: ch1→0, ch2→1, ch3→3, ch10→2 |
 | 38  | 86   | reserved                 | `0xFF`                                         |
 | 124 | 4    | crc32                    | over bytes 0..123                              |
 

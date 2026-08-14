@@ -3,9 +3,10 @@ Name: CoWork
 short-description: Dual-module sample sequencer — two linked Computers play MIDI-file songs through your own sounds
 summary: >-
   CoWork turns one or two Workshop Computers into a sample groovebox driven
-  by your own MIDI files and sounds. One module plays melodic parts (pitched
-  lead and bass with v/oct and gate outputs), the other percussive parts (a
-  16-pad drum kit with trigger outputs). Link the two front-panel USB ports
+  by your own MIDI files and sounds. One module plays melodic parts (a
+  duophonic lead, a 3-voice chord pad and a mono bass, with v/oct and gate
+  outputs), the other percussive parts (a 16-pad drum kit with trigger
+  outputs). Link the two front-panel USB ports
   and one module leads, sending MIDI clock and transport, while the other
   follows sample-locked — or sync the follower to any DAW's USB MIDI clock.
   Songs and samples are prepared and uploaded from a browser-based manager
@@ -55,9 +56,9 @@ panel:
       description: Edges forwarded to the linked module as MIDI notes
   outputs:
     - id: AudioOut1
-      name: Lead / Kit Mix
+      name: Lead+Pad / Kit Mix
       type: audio
-      description: Melodic mode - lead instrument mix; percussive mode - full drum kit mix
+      description: Melodic mode - lead and pad mix; percussive mode - full drum kit mix
     - id: AudioOut2
       name: Bass / Submix
       type: audio
@@ -91,18 +92,18 @@ controls:
       name: Engine Toggle (hold)
       description: Hold about one second to toggle between the melodic engine (lead + bass) and the percussive engine (drum kit)
     tap:
-      name: Transport
-      description: Short press starts or stops the transport (leader), or starts the internal clock on a follower with no clock source
+      name: Transport / Next Song
+      description: A single tap starts or stops the transport (leader; on a follower with no clock source it starts the internal clock). A double tap advances to the next loaded song, skipping empty slots — while running the change lands at the loop point
   knobs:
     - main:
-        name: Master Volume
-        description: Output level for both audio outputs
+        name: Loop Roll
+        description: Loops the playing sequence — counterclockwise to clockwise 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; fully clockwise = no looping. The song position (and the leader's clock output) keeps running underneath, so releasing the roll drops back in where the song would have been
       x:
         name: Tempo
         description: 40-240 BPM with pickup — the song's own tempo map applies until the knob is moved (leader); sets the internal fallback tempo on a follower
       y:
-        name: Song Select
-        description: Chooses the song slot; while running the change lands at the loop point
+        name: Master Volume
+        description: Output level for both audio outputs
   leds:
     - display: list
       items:
