@@ -297,6 +297,28 @@ test("protocol: erase then read back 0xFF", async () => {
   assert.ok(back.every(b => b === 0xFF));
 });
 
+test("protocol: concurrent commands serialize (poller during upload)", async () => {
+  // Regression: the status poller used to fire mid-upload, injecting its
+  // 'T?' bytes into the W body (firmware saw them as sample data -> CRC)
+  // and stealing response lines (transport() reported a JSON status line
+  // as its error). The Protocol mutex must make this safe.
+  const { proto, mock } = makeLink({ seed: 5 });
+  await proto.sync();
+  const data = new Uint8Array(60000);
+  for (let i = 0; i < data.length; i++) data[i] = (i * 31 + 7) & 0xFF;
+  const off = mock.map.samples.dataOff;
+  const results = await Promise.all([
+    proto.write(off, data),
+    proto.transport("?"),   // simulated poll
+    proto.getConfig(),      // simulated live config edit
+    proto.transport("?"),   // another poll
+  ]);
+  assert.equal(results[1].playing, false);
+  assert.equal(typeof results[2].engineMode, "number");
+  const back = await proto.read(off, data.length);
+  assert.deepEqual(back, data);
+});
+
 test("end-to-end: stage a song via the codecs and mock card", async () => {
   const { proto, mock } = makeLink({ seed: 11 });
   await proto.sync();

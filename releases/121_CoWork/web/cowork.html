@@ -740,16 +740,45 @@ class ByteReader {
 }
 
 class Protocol {
-  constructor(link) { this.link = link; }
+  constructor(link) {
+    this.link = link;
+    this._chain = Promise.resolve();
+  }
 
-  async sync() {
+  // Every command shares one wire and one reader, so operations MUST take
+  // turns. Without this, the 2 s status poller can fire mid-upload: its
+  // 'T?' bytes land inside the W body (the firmware counts them as sample
+  // data -> CRC failure) and the two callers steal each other's response
+  // lines. All public methods run through this mutex.
+  async _exclusive(fn) {
+    const prev = this._chain;
+    let done;
+    this._chain = new Promise(r => { done = r; });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      done();
+    }
+  }
+
+  sync() { return this._exclusive(() => this._sync()); }
+  info() { return this._exclusive(() => this._info()); }
+  read(off, len, cb) { return this._exclusive(() => this._read(off, len, cb)); }
+  write(off, bytes, cb) { return this._exclusive(() => this._write(off, bytes, cb)); }
+  erase(off, len) { return this._exclusive(() => this._erase(off, len)); }
+  getConfig() { return this._exclusive(() => this._getConfig()); }
+  setConfig(cfg) { return this._exclusive(() => this._setConfig(cfg)); }
+  transport(sub) { return this._exclusive(() => this._transport(sub)); }
+
+  async _sync() {
     this.link.reader.clear();
     await this.link.write(Uint8Array.of(0x58)); // 'X'
     const line = await this.link.reader.readLine(1500);
     if (line !== "SYNC") throw new Error("sync failed: " + line);
   }
 
-  async info() {
+  async _info() {
     await this.link.write(Uint8Array.of(0x49)); // 'I'
     const len = readU32(await this.link.reader.readExact(4), 0);
     if (len === 0 || len > 4096) throw new Error("bad info length");
@@ -757,7 +786,7 @@ class Protocol {
     return JSON.parse(new TextDecoder().decode(body));
   }
 
-  async read(off, len, onProgress) {
+  async _read(off, len, onProgress) {
     const req = new Uint8Array(9);
     req[0] = 0x52; // 'R'
     req.set(u32le(off), 1); req.set(u32le(len), 5);
@@ -780,7 +809,7 @@ class Protocol {
     return out;
   }
 
-  async write(off, bytes, onProgress) {
+  async _write(off, bytes, onProgress) {
     const req = new Uint8Array(13);
     req[0] = 0x57; // 'W'
     req.set(u32le(off), 1); req.set(u32le(bytes.length), 5);
@@ -797,7 +826,7 @@ class Protocol {
     if (fin !== "OK") throw new Error("write failed: " + fin);
   }
 
-  async erase(off, len) {
+  async _erase(off, len) {
     const req = new Uint8Array(9);
     req[0] = 0x45; // 'E'
     req.set(u32le(off), 1); req.set(u32le(len), 5);
@@ -806,7 +835,7 @@ class Protocol {
     if (resp !== "OK") throw new Error("erase failed: " + resp);
   }
 
-  async getConfig() {
+  async _getConfig() {
     await this.link.write(Uint8Array.of(0x47)); // 'G'
     const len = readU32(await this.link.reader.readExact(4), 0);
     const body = await this.link.reader.readExact(len);
@@ -815,7 +844,7 @@ class Protocol {
     return c;
   }
 
-  async setConfig(cfg) {
+  async _setConfig(cfg) {
     const blob = encodeConfig(cfg);
     const msg = new Uint8Array(1 + 4 + blob.length + 4);
     msg[0] = 0x53; // 'S'
@@ -827,7 +856,7 @@ class Protocol {
     if (resp !== "OK") throw new Error("config rejected: " + resp);
   }
 
-  async transport(sub) {
+  async _transport(sub) {
     await this.link.write(Uint8Array.of(0x54, sub.charCodeAt(0))); // 'T'
     if (sub === "?") {
       const line = await this.link.reader.readLine();
@@ -1048,6 +1077,7 @@ const state = {
   slots: [],      // 18 sample slots {entry, pcm:Int16Array|null, dirty}
   connected: false,
   mock: false,
+  applying: false,
   port: null,
 };
 
@@ -1161,6 +1191,10 @@ let pollTimer = null;
 async function pollStatus() {
   if (pollTimer) clearTimeout(pollTimer);
   if (!state.connected) return;
+  if (state.applying) { // don't queue polls behind a long Apply
+    pollTimer = setTimeout(pollStatus, 2000);
+    return;
+  }
   try {
     const st = await state.proto.transport("?");
     $("stRole").textContent = st.role;
@@ -1522,6 +1556,7 @@ async function applyChanges() {
   if (!ch.any) return;
   const btn = $("btnApply");
   btn.disabled = true;
+  state.applying = true;
   const bar = $("applyBar");
   const detail = $("applyDetail");
   const setBar = (f, txt) => { bar.style.width = `${Math.round(f * 100)}%`; detail.textContent = txt; };
@@ -1569,7 +1604,15 @@ async function applyChanges() {
   } catch (e) {
     log(`Apply failed: ${e.message}`, "err");
     detail.textContent = `Failed: ${e.message}`;
+    // A failed transfer can leave the card mid-command (e.g. waiting for
+    // W body bytes). Its inter-byte timeout is 2 s; wait it out, then
+    // re-frame the stream.
+    log("Resynchronizing with the card…", "warn");
+    await new Promise(r => setTimeout(r, 2600));
+    try { await p.sync(); log("Resynchronized.", "ok"); }
+    catch { log("Resync failed — reconnect the card.", "err"); }
   }
+  state.applying = false;
   btn.disabled = false;
 }
 
