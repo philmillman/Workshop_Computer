@@ -80,6 +80,7 @@ inline void ConfigSanitize(Config &c, uint32_t songSlots)
 	if (c.pulse1_lane > 15) c.pulse1_lane = 0;
 	if (c.pulse2_lane > 15) c.pulse2_lane = 2;
 	if (c.cv2_lane > 15) c.cv2_lane = 0;
+	if (c.release_pad == 0) c.release_pad = 60; // byte was reserved-0 in old blobs
 	for (int i = 0; i < 16; i++)
 		if (c.midi_channel_to_part[i] > 3 && c.midi_channel_to_part[i] != 0xFF)
 			c.midi_channel_to_part[i] = 0xFF;

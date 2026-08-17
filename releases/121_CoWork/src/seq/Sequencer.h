@@ -41,6 +41,7 @@ public:
 		phaseQ16_ = 0;
 		cursor_ = 0;
 		ended_ = false;
+		generation_++;
 	}
 
 	// Jump to an absolute tick (follower hard resync). Dispatches nothing;
@@ -62,6 +63,7 @@ public:
 		}
 		cursor_ = LowerBound(tick);
 		ended_ = false;
+		generation_++;
 	}
 
 	void SetTickIncQ16(uint32_t inc) { tickIncQ16_ = inc; }
@@ -95,12 +97,18 @@ public:
 
 		if (header_->flags & 1) {
 			uint32_t end = header_->loop_end_tick;
+			uint32_t start = header_->loop_start_tick;
 			if (now >= end) {
+				uint32_t gen = generation_;
 				l.OnLoopWrap();
-				uint32_t start = header_->loop_start_tick;
+				result |= kAdvWrapped;
+				// The listener may have attached another song, sought, or
+				// detached (double-tap song advance lands here). Its call
+				// already reset phase/cursor; the wrap subtraction below
+				// would corrupt the fresh state.
+				if (generation_ != gen) return result;
 				phaseQ16_ -= ((uint64_t)(end - start)) << 16;
 				cursor_ = LowerBound(Tick());
-				result |= kAdvWrapped;
 			}
 		} else if (now >= header_->length_ticks) {
 			ended_ = true;
@@ -144,6 +152,8 @@ private:
 	uint64_t phaseQ16_ = 0;
 	uint32_t cursor_ = 0;
 	uint32_t tickIncQ16_ = 0;
+	uint32_t generation_ = 0; // bumped by Reset/Seek so Advance can detect
+	                          // re-entrant song changes from OnLoopWrap
 	bool ended_ = false;
 };
 

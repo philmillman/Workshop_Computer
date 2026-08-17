@@ -154,6 +154,73 @@ static void TestSeek()
 	CHECK(s.Tick() < 384);
 }
 
+// Regression (field report): double-tap song advance attaches the next
+// song from inside OnLoopWrap — i.e. while Advance() is mid-wrap. The old
+// code then subtracted the OLD loop span from the freshly reset phase,
+// underflowing it so no events ever dispatched again until a transport
+// restart. Attach from the callback must leave the new song playing.
+struct SwitchOnWrap : Recorder {
+	Sequencer *seq = nullptr;
+	const uint8_t *next = nullptr;
+	uint32_t nextBytes = 0;
+	bool switched = false;
+	void OnLoopWrap() override
+	{
+		Recorder::OnLoopWrap();
+		if (!switched) {
+			switched = true;
+			seq->Attach(next, nextBytes);
+			seq->SetTickIncQ16(Sequencer::TickIncForTempo(500000));
+		}
+	}
+};
+
+static void TestSongSwitchInsideWrapCallback()
+{
+	SongBuilder a;
+	a.lengthTicks = 96;
+	a.loopEnd = 96;
+	a.NoteOn(0, kPartLead, 60, 100);
+	auto imgA = a.Build();
+
+	SongBuilder b;
+	b.lengthTicks = 192;
+	b.loopEnd = 192;
+	b.NoteOn(0, kPartLead, 72, 100);
+	b.NoteOn(96, kPartLead, 74, 100);
+	auto imgB = b.Build();
+
+	Sequencer s;
+	CHECK(s.Attach(imgA.data(), (uint32_t)imgA.size()));
+	s.SetTickIncQ16(Sequencer::TickIncForTempo(500000));
+
+	SwitchOnWrap r;
+	r.seq = &s;
+	r.next = imgB.data();
+	r.nextBytes = (uint32_t)imgB.size();
+
+	// One quarter of song A (to its wrap/switch at ~24k samples), then
+	// enough of song B to pass its tick-96 note (~24k more)
+	for (r.sample = 0; r.sample < 60000; r.sample++) {
+		s.Advance(r);
+		CHECK(s.Tick() < 192); // phase must never explode
+		if (gFailures) return; // don't spam on failure
+	}
+
+	CHECK(r.switched);
+	// Note 60 (song A), then song B's 72 and 74 must both have played
+	int saw60 = 0, saw72 = 0, saw74 = 0;
+	for (auto &e : r.log.entries)
+		if (e.kind == 'n') {
+			if (e.d1 == 60) saw60++;
+			if (e.d1 == 72) saw72++;
+			if (e.d1 == 74) saw74++;
+		}
+	CHECK(saw60 >= 1);
+	CHECK(saw72 >= 1);
+	CHECK(saw74 >= 1);
+}
+
 static void TestTickIncMath()
 {
 	// 120 BPM at 96 PPQN = 192 ticks/s = 0.004 ticks/sample = 262.144 Q16
@@ -171,6 +238,7 @@ int main()
 	TestLoop();
 	TestTempoEvent();
 	TestSeek();
+	TestSongSwitchInsideWrapCallback();
 	TestTickIncMath();
 	return TestResult("test_sequencer");
 }

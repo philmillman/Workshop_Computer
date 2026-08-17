@@ -83,12 +83,18 @@ The firmware only validates and plays.
 | Off | Size | Field           | Value                                     |
 |-----|------|-----------------|-------------------------------------------|
 | 0   | 4    | magic           | `"CWSB"` = u32 `0x42535743`                |
-| 4   | 2    | version         | 1                                          |
+| 4   | 2    | version         | 2                                          |
 | 6   | 2    | slot_count      | 19                                         |
 | 8   | 4    | sample_rate     | 24000                                      |
 | 12  | 4    | data_bytes_used | UI usage display                           |
-| 16  | 4    | dir_crc32       | CRC32 over the 18 × 32-byte entries        |
+| 16  | 4    | dir_crc32       | CRC32 over the 19 × 32-byte entries        |
 | 20  | 12   | reserved        | `0xFF`                                     |
+
+Version history: v1 was the 18-slot pre-pad layout (drums at 2–17). The
+web manager migrates v1 directories on read (drum entries shift to 3–18,
+sample data stays put) and rewrites them as v2 on Apply; the firmware
+rejects anything but v2/19 — reinterpreting an old directory without
+migration puts the kick in the pad slot and shifts every drum lane.
 
 ### Slot entry (32 bytes each, at 32 + slot × 32)
 
@@ -139,7 +145,7 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 | 18  | 1    | release_lead             | ms/4 (0–255 → 0–1020 ms); default 15 (60 ms)   |
 | 19  | 1    | release_bass             | default 30 (120 ms)                            |
 | 20  | 1    | master_vol               | 0–255 boot default; Y knob overrides live      |
-| 21  | 1    | release_pad              | ms/4; default 60 (240 ms)                      |
+| 21  | 1    | release_pad              | ms/4; default 60 (240 ms); 0 (old blobs' reserved byte) reads as the default |
 | 22  | 16   | midi_channel_to_part[16] | live USB-MIDI: 0 lead, 1 bass, 2 drums, 3 pad, 0xFF ignore. Default: ch1→0, ch2→1, ch3→3, ch10→2 |
 | 38  | 86   | reserved                 | `0xFF`                                         |
 | 124 | 4    | crc32                    | over bytes 0..123                              |

@@ -206,6 +206,58 @@ test("bank directory round-trip and allocator", () => {
   assert.equal(C.allocateBank(big, 1024 * 1024), null);
 });
 
+test("bank directory: old layouts migrate, unknown versions reject", () => {
+  // v1/18 = pre-pad layout (drums at 2..17), as written by web UI v0.1.0.
+  // Field report: reading it under the 19-slot layout without migration
+  // put the kick in the PAD slot and shifted every drum lane by one.
+  const dir = new Uint8Array(C.SECTOR).fill(0xFF);
+  const dv = new DataView(dir.buffer);
+  dv.setUint32(0, C.BANK_MAGIC, true);
+  dv.setUint16(4, 1, true);   // version 1
+  dv.setUint16(6, 18, true);  // 18 slots
+  dv.setUint32(8, C.SAMPLE_RATE, true);
+  const putSlot = (i, name, offset, frames, root, assign) => {
+    const o = 32 + i * 32;
+    dir.fill(0, o, o + 12);
+    for (let k = 0; k < name.length; k++) dir[o + k] = name.charCodeAt(k);
+    dv.setUint32(o + 12, offset, true);
+    dv.setUint32(o + 16, frames, true);
+    dv.setUint32(o + 20, C.SAMPLE_RATE, true);
+    dir[o + 24] = root; dir[o + 25] = assign; dir[o + 26] = 0; dir[o + 27] = 0;
+    dv.setUint32(o + 28, 0, true);
+  };
+  putSlot(0, "lead", 0x1000, 1000, 60, 0xFF);
+  putSlot(2, "kick", 0x2000, 500, 0xFF, 36);   // old drum lane 0
+  putSlot(3, "snare", 0x3000, 500, 0xFF, 38);  // old drum lane 1
+
+  const dec = C.decodeBankDir(dir);
+  assert.ok(dec && dec.migrated);
+  assert.equal(dec.slots.length, 19);
+  assert.equal(dec.slots[0].name, "lead");
+  assert.equal(dec.slots[2].lengthFrames, 0);      // PAD inserted empty
+  assert.equal(dec.slots[3].name, "kick");         // drums shifted to 3..18
+  assert.equal(dec.slots[3].assignNote, 36);
+  assert.equal(dec.slots[4].assignNote, 38);
+
+  // v1/19 (interim unversioned build): entries stay put, flagged migrated
+  const slots19 = new Array(19).fill(null).map(() => ({}));
+  slots19[3] = { name: "kick", offset: 0x1000, lengthFrames: 500, root: 0xFF, assignNote: 36 };
+  const enc = C.encodeBankDir(slots19, 0);
+  assert.equal(new DataView(enc.buffer).getUint16(4, true), C.BANK_VERSION); // writes v2
+  const interim = enc.slice();
+  new DataView(interim.buffer).setUint16(4, 1, true);
+  const dec19 = C.decodeBankDir(interim);
+  assert.ok(dec19 && dec19.migrated);
+  assert.equal(dec19.slots[3].assignNote, 36);
+
+  // Current version round-trips unflagged; future versions reject
+  const cur = C.decodeBankDir(enc);
+  assert.ok(cur && !cur.migrated);
+  const future = enc.slice();
+  new DataView(future.buffer).setUint16(4, 3, true);
+  assert.equal(C.decodeBankDir(future), null);
+});
+
 // ---------------------------------------------------------------- audio utils
 test("audio utility functions", () => {
   const f = new Float32Array([0, 0.5, -0.5, 0]);

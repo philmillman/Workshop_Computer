@@ -10,7 +10,10 @@
 namespace cowork {
 
 constexpr uint32_t kBankMagic = 0x42535743u; // "CWSB"
-constexpr uint16_t kBankVersion = 1;
+// Version 2 = the 19-slot layout (pad at 2, drums at 3..18). Version 1 was
+// the 18-slot pre-pad layout; the web manager migrates v1 directories, the
+// firmware rejects them (an unversioned reinterpretation scrambles slots).
+constexpr uint16_t kBankVersion = 2;
 constexpr uint16_t kBankSlots = 19; // 0 lead, 1 bass, 2 pad, 3..18 drums
 constexpr uint32_t kBankSampleRate = 24000;
 constexpr uint32_t kNumDrumLanes = 16;

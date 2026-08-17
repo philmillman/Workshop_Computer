@@ -50,5 +50,6 @@ hats cut the open hat — listen for it.
 3. **Apply**, then tap the switch (or the manager's Play). Melodic mode
    plays lead+pad+bass; hold the switch ~1 s to hear the drum side, and
    double-tap it to jump to the next loaded song.
-4. Try the Main knob while playing: it loop-rolls the sequence (1 beat up
-   to 8 bars); fully clockwise resumes normal playback in time.
+4. Try the Main knob while playing: it loop-rolls the sequence (from a
+   16th-note ratchet up to 8 bars); fully clockwise resumes normal
+   playback in time.

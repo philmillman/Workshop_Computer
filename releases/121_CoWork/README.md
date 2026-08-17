@@ -56,7 +56,7 @@ Notes:
 | Z tap (short press down) | Transport start/stop (leader); internal-clock start/stop (follower without clock) |
 | Z double tap | Next loaded song, skipping empty slots (lands at the loop point while running) |
 | Z hold ~1 s | Toggle melodic / percussive engine |
-| Main knob | **Loop roll**: loops the playing sequence — CCW to CW: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; full CW = no looping. The song position (and the leader's clock out) keeps running underneath, so turning it back CW drops you where the song would have been |
+| Main knob | **Loop roll**: loops the playing sequence — CCW to CW: 1/4 beat (16th-note ratchet), 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; full CW = no looping. The song position (and the leader's clock out) keeps running underneath, so turning it back CW drops you where the song would have been |
 | X knob | Tempo 40–240 BPM (leader; pickup — the song's own tempo until moved). Follower: internal fallback tempo |
 | Y knob | Master volume |
 

@@ -162,6 +162,7 @@ const CoWorkCore = (() => {
 const PPQN = 96;
 const SEQ_MAGIC = 0x51535743;   // "CWSQ"
 const BANK_MAGIC = 0x42535743;  // "CWSB"
+const BANK_VERSION = 2;         // v2 = pad at slot 2, drums at 3..18
 const CFG_MAGIC = 0x46435743;   // "CWCF"
 const BANK_SLOTS = 19;
 const NUM_LANES = 16;
@@ -543,7 +544,7 @@ function encodeBankDir(slots, dataBytesUsed) {
     writeU32(entries, o + 28, s.dataCrc || 0);
   }
   writeU32(buf, 0, BANK_MAGIC);
-  writeU16(buf, 4, 1);
+  writeU16(buf, 4, BANK_VERSION);
   writeU16(buf, 6, BANK_SLOTS);
   writeU32(buf, 8, SAMPLE_RATE);
   writeU32(buf, 12, dataBytesUsed || 0);
@@ -554,8 +555,23 @@ function encodeBankDir(slots, dataBytesUsed) {
 
 function decodeBankDir(bytes) {
   if (bytes.length < SECTOR || readU32(bytes, 0) !== BANK_MAGIC) return null;
+  const version = readU16(bytes, 4);
+  const slotCount = readU16(bytes, 6);
+  let count;
+  let migrated = false;
+  if (version === BANK_VERSION && slotCount === BANK_SLOTS) {
+    count = BANK_SLOTS;
+  } else if (version === 1 && slotCount === 18) {
+    count = 18;       // pre-pad layout: drums lived at slots 2..17
+    migrated = true;
+  } else if (version === 1 && slotCount === 19) {
+    count = 19;       // interim builds wrote the new layout unversioned
+    migrated = true;
+  } else {
+    return null;
+  }
   const slots = [];
-  for (let i = 0; i < BANK_SLOTS; i++) {
+  for (let i = 0; i < count; i++) {
     const o = 32 + i * 32;
     slots.push({
       name: readName(bytes, o, 12),
@@ -569,7 +585,15 @@ function decodeBankDir(bytes) {
       dataCrc: readU32(bytes, o + 28),
     });
   }
-  return { dataBytesUsed: readU32(bytes, 12), dirCrc: readU32(bytes, 16), slots };
+  if (count === 18) {
+    // Shift drums to their new home and give the PAD slot an empty entry.
+    // Sample data itself doesn't move — only the directory entries do.
+    slots.splice(2, 0, { name: "", offset: 0xFFFFFFFF, lengthFrames: 0,
+      sampleRate: SAMPLE_RATE, root: 60, assignNote: 0xFF, flags: 0,
+      choke: 0, dataCrc: 0 });
+  }
+  return { dataBytesUsed: readU32(bytes, 12), dirCrc: readU32(bytes, 16),
+           slots, migrated };
 }
 
 // First-fit allocator: keeps slots that already live on the card at their
@@ -1044,7 +1068,7 @@ class MockDevice {
 }
 
 return {
-  PPQN, SEQ_MAGIC, BANK_MAGIC, CFG_MAGIC, BANK_SLOTS, NUM_LANES, SAMPLE_RATE,
+  PPQN, SEQ_MAGIC, BANK_MAGIC, BANK_VERSION, CFG_MAGIC, BANK_SLOTS, NUM_LANES, SAMPLE_RATE,
   SECTOR, SONG_SLOT_BYTES, MAX_EVENTS, CONFIG_BYTES, GM_DRUM_MAP,
   crc32, u32le, readU32, readU16, computeMap, noteName,
   parseSMF, smfChannelSummary, suggestChannelMap, convertSMF,
@@ -1164,6 +1188,8 @@ async function refreshCardContent() {
   // Sample directory
   const dir = await p.read(inf.samples.off, C.SECTOR).catch(() => null);
   const decoded = dir ? C.decodeBankDir(dir) : null;
+  if (dir && !decoded && C.readU32(dir, 0) === C.BANK_MAGIC)
+    log("Sample bank on the card has an unknown format version — showing it as empty.", "warn");
   state.slots = [];
   for (let i = 0; i < C.BANK_SLOTS; i++) {
     const e = decoded ? decoded.slots[i] : null;
@@ -1174,6 +1200,11 @@ async function refreshCardContent() {
       dirty: false,
       onCard: !!populated,
     });
+  }
+  if (decoded && decoded.migrated) {
+    for (const s of state.slots) s.metaDirty = true;
+    log("Sample bank used an older slot layout — migrated (samples untouched). " +
+        "Click Apply to store the updated directory.", "warn");
   }
 }
 

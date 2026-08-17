@@ -403,8 +403,9 @@ void CoWorkCard::HandleSwitch()
 	wasDown_ = down;
 }
 
-// Loop-roll window lengths, CCW to CW: 1 beat, 2 beats, 1 bar, 2 bars,
-// 4 bars, 8 bars; zone 6 (full CW) = no looping.
+// Loop-roll window lengths, CCW to CW: 1/4 beat (16th-note ratchet),
+// 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; the last
+// zone (full CW) = no looping.
 uint32_t CoWorkCard::LoopZoneTicks(int zone) const
 {
 	uint32_t bar = 384; // 4/4 default
@@ -415,12 +416,14 @@ uint32_t CoWorkCard::LoopZoneTicks(int zone) const
 		if (bar == 0) bar = 384;
 	}
 	switch (zone) {
-	case 0: return 96;        // 1 beat
-	case 1: return 192;       // 2 beats
-	case 2: return bar;
-	case 3: return bar * 2;
-	case 4: return bar * 4;
-	case 5: return bar * 8;
+	case 0: return 24;        // 1/4 beat — 16th-note ratchet
+	case 1: return 48;        // 1/2 beat
+	case 2: return 96;        // 1 beat
+	case 3: return 192;       // 2 beats
+	case 4: return bar;
+	case 5: return bar * 2;
+	case 6: return bar * 4;
+	case 7: return bar * 8;
 	default: return 0;        // off
 	}
 }
@@ -448,11 +451,11 @@ void CoWorkCard::HandleKnobs()
 	// Main: loop-roll length (absolute — full CW = off), with hysteresis
 	// so a knob resting on a zone boundary doesn't flutter.
 	int32_t km = KnobVal(Knob::Main);
-	int zone = (int)((km * 7) / 4096);
-	if (zone > 6) zone = 6;
+	int zone = (int)((km * 9) / 4096);
+	if (zone > 8) zone = 8;
 	if (zone != loopZone_) {
-		int32_t lo = zone * 4096 / 7;
-		int32_t hi = (zone + 1) * 4096 / 7;
+		int32_t lo = zone * 4096 / 9;
+		int32_t hi = (zone + 1) * 4096 / 9;
 		if (loopZone_ < 0 || (km > lo + 40 && km < hi - 40)) {
 			loopZone_ = zone;
 			uint32_t len = LoopZoneTicks(zone);
@@ -511,7 +514,8 @@ void CoWorkCard::AdvanceSequencer()
 
 	// Loop-roll overlay: the dispatch position wraps a window while the
 	// master phase keeps running (and keeps its place in the song loop).
-	if (looping) {
+	// (Loaded() re-checked: the wrap callback may have switched songs.)
+	if (looping && seq_.Loaded()) {
 		masterPhaseQ16_ += seq_.TickIncQ16();
 		const SeqHeader *h = seq_.Header();
 		if (h->flags & 1) {
