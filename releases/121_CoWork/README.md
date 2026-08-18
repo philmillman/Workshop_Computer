@@ -103,6 +103,10 @@ changes (routing, releases, note maps) apply live.
   and optional sustain loop.
 - **Drum kit**: 16 pads, GM-style default note map (editable), choke groups
   for open/closed hats.
+- **Folder import**: drop a whole folder (or a multi-file selection) of
+  samples anywhere on the page — a review dialog matches files to slots by
+  name (kick/snare/hat/tom/…, editable before staging), and a note in a
+  file name (`bass_c2.wav`) sets that instrument's root.
 - Samples are converted to 16-bit mono 24 kHz, trimmed and normalized.
 - No hardware handy? Open with `?mock=1` for a simulated card.
 

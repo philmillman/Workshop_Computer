@@ -45,8 +45,9 @@ hats cut the open hat — listen for it.
 ## Quick start
 
 1. Connect the card, open the manager, load `01_first_test.mid` into slot 1.
-2. Drop `lead_c4.wav`, `bass_c2.wav` and `pad_c4.wav` on LEAD/BASS/PAD,
-   and `kick.wav`, `snare.wav`, `hat_closed.wav` on pads 1/3/5.
+2. Drop the whole `samples/` folder anywhere on the page — every file
+   auto-maps to the right slot (instruments included, with their root
+   notes read from the file names). Confirm the dialog.
 3. **Apply**, then tap the switch (or the manager's Play). Melodic mode
    plays lead+pad+bass; hold the switch ~1 s to hear the drum side, and
    double-tap it to jump to the next loaded song.

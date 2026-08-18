@@ -258,6 +258,34 @@ test("bank directory: old layouts migrate, unknown versions reject", () => {
   assert.equal(C.decodeBankDir(future), null);
 });
 
+test("sample folder mapping: name suggestions and root notes", () => {
+  // The example kit's file names must all land on the right slots
+  const names = ["kick.wav", "rim.wav", "snare.wav", "clap.wav",
+    "hat_closed.wav", "hat_pedal.wav", "hat_open.wav",
+    "tom_low.wav", "tom_mid.wav", "tom_hi.wav",
+    "crash.wav", "ride.wav", "tambourine.wav", "cowbell.wav",
+    "shaker.wav", "clave.wav", "lead_c4.wav", "bass_c2.wav", "pad_c4.wav"];
+  const s = C.suggestSampleSlots(names);
+  assert.deepEqual(s, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 0, 1, 2]);
+
+  // Common alternative naming styles
+  assert.deepEqual(C.suggestSampleSlots(["808 Bass Drum.wav", "HiHat.wav", "OH.wav"]),
+                   [3, 7, 9]);
+
+  // Each slot suggested once; later duplicates fall to ignore
+  const dup = C.suggestSampleSlots(["kick_a.wav", "kick_b.wav", "mystery.wav"]);
+  assert.equal(dup[0], 3);
+  assert.equal(dup[2], -1);
+
+  // Root notes from file names
+  assert.equal(C.noteFromFilename("bass_c2.wav"), 36);
+  assert.equal(C.noteFromFilename("lead_C4.wav"), 60);
+  assert.equal(C.noteFromFilename("pluck-f#3.wav"), 54);
+  assert.equal(C.noteFromFilename("Ab2 sub.wav"), 44);
+  assert.equal(C.noteFromFilename("kick.wav"), null);
+  assert.equal(C.noteFromFilename("track12.wav"), null);
+});
+
 // ---------------------------------------------------------------- audio utils
 test("audio utility functions", () => {
   const f = new Float32Array([0, 0.5, -0.5, 0]);

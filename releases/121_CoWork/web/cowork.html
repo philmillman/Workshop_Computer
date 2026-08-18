@@ -150,6 +150,23 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
   </div>
 </dialog>
 
+<dialog id="folderDialog">
+  <h3 style="margin-top:0">Import samples</h3>
+  <div id="folderInfo" class="hint"></div>
+  <div style="max-height:50vh; overflow-y:auto; margin-top:6px">
+    <table id="folderTable"></table>
+  </div>
+  <div class="hint" style="margin:8px 0">
+    Files are matched to slots by name — fix any misses. A note in a file
+    name (e.g. <code>pluck_c4</code>) sets the instrument's root. Staging a
+    slot twice keeps the last file.
+  </div>
+  <div class="row" style="justify-content:flex-end; margin-top:10px">
+    <button id="folderCancel">Cancel</button>
+    <button id="folderOk" class="primary">Stage samples</button>
+  </div>
+</dialog>
+
 <script id="cowork-core">
 "use strict";
 // ============================================================================
@@ -673,6 +690,62 @@ function decodeConfig(bytes) {
   return c;
 }
 
+// ------------------------------------------------- sample folder mapping
+// UI-level heuristics for bulk sample import: match file names to bank
+// slots and pull a root note out of names like "pluck_c4".
+
+const SAMPLE_TARGETS = ["Lead", "Bass", "Pad",
+  ...GM_DRUM_MAP.map((g, i) => `Pad ${i + 1}: ${g.name}`)];
+
+function normalizeSampleName(name) {
+  return name.replace(/\.[^.]*$/, "").toLowerCase().replace(/[_\-.\s]+/g, " ");
+}
+
+function noteFromFilename(name) {
+  const m = normalizeSampleName(name).match(/(?:^| )([a-g])(#|b|sharp|flat)? ?(-?[0-8])(?: |$)/);
+  if (!m) return null;
+  const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1]];
+  const acc = (m[2] === "#" || m[2] === "sharp") ? 1 : m[2] ? -1 : 0;
+  const note = 12 * (parseInt(m[3], 10) + 1) + base + acc;
+  return note >= 0 && note <= 127 ? note : null;
+}
+
+// First matching rule wins; each slot is suggested at most once.
+const kSampleNameRules = [
+  [3, /kick|bass ?drum|\bbd\b/],
+  [4, /rim/],
+  [5, /snare|\bsd\b|\bsn\b/],
+  [6, /clap|\bcp\b/],
+  [8, /pedal|\bphh?\b/],
+  [9, /open ?(hat|hh?)|(hat|hh) ?open|\bohh?\b/],
+  [7, /closed|hi ?hat|hat|\bhh\b|\bchh?\b/],
+  [10, /(low|lo|floor) ?tom|tom ?(low|lo|1)\b|floor/],
+  [12, /(hi|high) ?tom|tom ?(hi|high|3)\b/],
+  [11, /tom/],
+  [13, /crash/],
+  [14, /ride/],
+  [15, /tamb/],
+  [16, /cowbell|\bcb\b/],
+  [17, /shaker|shake|cabasa|maraca/],
+  [18, /clave|wood ?block/],
+  [2, /\bpad\b|chord|strings?\b|keys/],
+  [1, /\bbass\b|\bsub\b|808/],
+  [0, /\blead\b|pluck|synth|melody|arp\b|keys?/],
+];
+
+function suggestSampleSlots(names) {
+  const taken = new Set();
+  return names.map(n => {
+    const norm = normalizeSampleName(n);
+    for (const [slot, re] of kSampleNameRules)
+      if (re.test(norm) && !taken.has(slot)) {
+        taken.add(slot);
+        return slot;
+      }
+    return -1;
+  });
+}
+
 // ---------------------------------------------------------------- audio utils
 function mixToMono(channels) {
   if (channels.length === 1) return channels[0];
@@ -1074,6 +1147,7 @@ return {
   parseSMF, smfChannelSummary, suggestChannelMap, convertSMF,
   encodeSong, decodeSong, decodeSongHeader,
   encodeBankDir, decodeBankDir, allocateBank,
+  SAMPLE_TARGETS, suggestSampleSlots, noteFromFilename,
   defaultConfig, encodeConfig, decodeConfig,
   mixToMono, normalizePeak, trimSilence, floatToInt16, int16Bytes,
   ByteReader, Protocol, MockDevice,
@@ -1269,7 +1343,7 @@ function renderSongs() {
         ${cur ? `<button data-act="clear">Clear</button>` : ""}
         <button data-act="active">Set active</button>
       </div>`;
-    hookDrop(cell, files => importMidi(files[0], i));
+    hookDrop(cell, files => importMidi(files.find(isMidiFile) || files[0], i));
     cell.querySelector('[data-act="active"]').onclick = async () => {
       state.config.activeSong = i;
       await pushConfig();
@@ -1374,7 +1448,11 @@ function renderInstruments() {
         ${s.pcm ? `<button data-act="play">▶</button>` : ""}
         ${has ? `<button data-act="clear">Clear</button>` : ""}
       </div>`;
-    hookDrop(cell, files => importSample(files[0], i));
+    hookDrop(cell, files => {
+      const audio = files.filter(isAudioFile);
+      if (audio.length > 1) openSampleImportDialog(audio);
+      else if (audio.length) importSample(audio[0], i);
+    });
     drawWave(cell.querySelector("canvas"), s.pcm);
     cell.querySelector("[data-root]").onchange = e => { s.entry.root = +e.target.value; markSlotDirtyMeta(i); };
     cell.querySelector("[data-loop]").onchange = e => { s.entry.flags = e.target.checked ? 1 : 0; markSlotDirtyMeta(i); };
@@ -1406,7 +1484,11 @@ function renderKit() {
         ${s.pcm ? `<button data-act="play">▶</button>` : ""}
         ${has ? `<button data-act="clear">Clear</button>` : ""}
       </div>`;
-    hookDrop(cell, files => importSample(files[0], i));
+    hookDrop(cell, files => {
+      const audio = files.filter(isAudioFile);
+      if (audio.length > 1) openSampleImportDialog(audio);
+      else if (audio.length) importSample(audio[0], i);
+    });
     cell.querySelector("[data-note]").onchange = e => {
       const v = Math.max(0, Math.min(127, +e.target.value));
       s.entry.assignNote = v;
@@ -1648,15 +1730,110 @@ async function applyChanges() {
 }
 
 // ------------------------------------------------------------- misc UI
+const isAudioFile = f => /\.(wav|aiff?|mp3|flac|ogg|m4a|opus)$/i.test(f.name);
+const isMidiFile = f => /\.midi?$/i.test(f.name);
+
+// Resolve a drop to a flat file list, recursing into dropped folders.
+// webkitGetAsEntry must be called for every item synchronously, before
+// the first await, or the DataTransfer items go stale.
+async function collectDroppedFiles(dt) {
+  const entries = [];
+  if (dt.items)
+    for (const it of dt.items) {
+      const e = it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (e) entries.push(e);
+    }
+  if (!entries.length) return [...dt.files];
+
+  const out = [];
+  async function walk(entry) {
+    if (entry.isFile) {
+      out.push(await new Promise((res, rej) => entry.file(res, rej)));
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const e of batch) await walk(e);
+      }
+    }
+  }
+  for (const e of entries) await walk(e);
+  return out;
+}
+
+// Bulk sample import: review dialog in the same style as the MIDI
+// channel mapper — auto-suggested slot per file, then the normal staged
+// import pipeline.
+function openSampleImportDialog(files) {
+  if (!state.connected) {
+    log("Connect to a card (or use mock mode) before importing samples.", "warn");
+    return;
+  }
+  files = [...files].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 64);
+  const sug = C.suggestSampleSlots(files.map(f => f.name));
+
+  const dlg = $("folderDialog");
+  $("folderInfo").textContent =
+    `${files.length} audio file(s) — ${sug.filter(v => v >= 0).length} matched automatically`;
+  const tbl = $("folderTable");
+  tbl.innerHTML = `<tr><th>File</th><th>Size</th><th>Slot</th></tr>`;
+  files.forEach((f, i) => {
+    const opts = [`<option value="-1">— ignore —</option>`,
+      ...C.SAMPLE_TARGETS.map((n, v) =>
+        `<option value="${v}" ${sug[i] === v ? "selected" : ""}>${n}</option>`)].join("");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${escapeHtml(f.name)}</td><td>${(f.size / 1024) | 0} KB</td>
+      <td><select data-i="${i}">${opts}</select></td>`;
+    tbl.appendChild(tr);
+  });
+  dlg.showModal();
+
+  $("folderCancel").onclick = () => dlg.close();
+  $("folderOk").onclick = async () => {
+    const btn = $("folderOk");
+    const picks = [...tbl.querySelectorAll("select")].map(sel => +sel.value);
+    const total = picks.filter(v => v >= 0).length;
+    btn.disabled = true;
+    let done = 0;
+    for (let i = 0; i < files.length; i++) {
+      if (picks[i] < 0) continue;
+      btn.textContent = `Importing ${++done}/${total}…`;
+      await importSample(files[i], picks[i]);
+      const note = C.noteFromFilename(files[i].name);
+      if (note !== null && picks[i] <= 2 && state.slots[picks[i]].pcm)
+        state.slots[picks[i]].entry.root = note;
+    }
+    btn.disabled = false;
+    btn.textContent = "Stage samples";
+    dlg.close();
+    renderAll();
+    log(`Staged ${done} sample(s) — review the slots and Apply.`);
+  };
+}
+
 function hookDrop(el, fn) {
-  el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("dragover"); });
+  el.addEventListener("dragover", e => { e.preventDefault(); e.stopPropagation(); el.classList.add("dragover"); });
   el.addEventListener("dragleave", () => el.classList.remove("dragover"));
-  el.addEventListener("drop", e => {
+  el.addEventListener("drop", async e => {
     e.preventDefault();
+    e.stopPropagation();
     el.classList.remove("dragover");
-    if (e.dataTransfer.files.length) fn(e.dataTransfer.files);
+    const files = await collectDroppedFiles(e.dataTransfer);
+    if (files.length) fn(files);
   });
 }
+
+// Folders (or multi-selections) dropped anywhere open the bulk importer
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", async e => {
+  e.preventDefault();
+  const files = await collectDroppedFiles(e.dataTransfer);
+  const audio = files.filter(isAudioFile);
+  if (audio.length) openSampleImportDialog(audio);
+  else if (files.some(isMidiFile))
+    log("Drop MIDI files onto a specific song slot.", "warn");
+});
 
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
