@@ -95,6 +95,7 @@ void UsbCore1Entry()
 		if (!gShared.usbHostMode)
 			gUpload.Service();
 		MidiLink::ForwardCv(gShared.configStaging.fwd_enable & 0x03);
+		MidiLink::MirrorDiag();
 		MirrorRuntimeStateIntoConfig();
 		gConfigStore.Service(time_us_32(), gShared.transportRunning != 0,
 		                     gShared.configStaging);

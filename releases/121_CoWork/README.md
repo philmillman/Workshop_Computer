@@ -47,6 +47,17 @@ Notes:
   doesn't come up after re-cabling, power-cycle both modules.
 - A follower with no clock source can be started on its internal clock with
   a short press down on the switch.
+- A follower that loses its clock mid-song keeps playing at the last known
+  tempo (role LED blinks fast) and re-locks when the clock returns; it only
+  stops on a received Stop or a switch tap. Link-health counters show up in
+  the web manager's status row.
+- **Inspecting a linked run**: the link occupies the only USB port, so
+  diagnose after the fact — the modules also mirror their counters to each
+  other once a second. Leave the rack powered, move the USB cable from the
+  other module to your computer, and connect the manager: the status row
+  shows this module's counters and the peer's last-mirrored ones. If the
+  manager can't connect (that module was the USB host side), read the other
+  module instead. Don't power-cycle first — the counters live in RAM.
 
 ## Controls
 
@@ -57,7 +68,7 @@ Notes:
 | Z double tap | Next loaded song, skipping empty slots (lands at the loop point while running) |
 | Z hold ~1 s | Toggle melodic / percussive engine |
 | Main knob | **Loop roll**: loops the playing sequence — CCW to CW: 1/4 beat (16th-note ratchet), 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; full CW = no looping. The song position (and the leader's clock out) keeps running underneath, so turning it back CW drops you where the song would have been |
-| X knob | Tempo 40–240 BPM (leader; pickup — the song's own tempo until moved). Follower: internal fallback tempo |
+| X knob | Reserved — tempo always follows the song's MIDI tempo map (the follower's rate comes from the leader's clock) |
 | Y knob | Master volume |
 
 ## Patching
@@ -70,7 +81,7 @@ Notes:
 | CV out 2 | Bass v/oct (calibrated) | Velocity of a chosen lane |
 | Pulse out 1 | Lead gate | Kick trigger (10 ms, lane configurable) |
 | Pulse out 2 | Bass gate | Snare trigger (10 ms, lane configurable) |
-| CV in 1/2 | Forwarded to the peer module over USB (14-bit MIDI CC) | same |
+| CV in 1/2 | Forwarded to the peer module over USB (14-bit pitch bend, ch 15/16) | same |
 | Pulse in 1/2 | Forwarded to the peer as triggers | same |
 | Audio in | reserved (future FX) | same |
 

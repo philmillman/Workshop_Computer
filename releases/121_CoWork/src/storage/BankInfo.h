@@ -91,7 +91,7 @@ inline void BuildBankInfo(BankInfo &out, const uint8_t *flashBase, const FlashMa
 			uint32_t laneIdx = i - kSlotDrum0;
 			out.lane[laneIdx].data = pcm;
 			out.lane[laneIdx].frames = s.length_frames;
-			out.lane[laneIdx].choke = s.choke_group;
+			out.lane[laneIdx].choke = (s.choke_group <= 4) ? s.choke_group : 0;
 			if (s.assign_note <= 127)
 				out.noteToLane[s.assign_note] = (uint8_t)laneIdx;
 		}

@@ -99,8 +99,8 @@ controls:
         name: Loop Roll
         description: Loops the playing sequence — counterclockwise to clockwise 1/4 beat (16th-note ratchet), 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; fully clockwise = no looping. The song position (and the leader's clock output) keeps running underneath, so releasing the roll drops back in where the song would have been
       x:
-        name: Tempo
-        description: 40-240 BPM with pickup — the song's own tempo map applies until the knob is moved (leader); sets the internal fallback tempo on a follower
+        name: Reserved
+        description: Currently unused — tempo always follows the song's MIDI tempo map (a follower's rate comes from the received clock)
       y:
         name: Master Volume
         description: Output level for both audio outputs

@@ -35,7 +35,13 @@ public:
 	void OnLoopWrap() override;
 
 private:
-	static constexpr uint32_t kBootSettleSamples = 480;   // 10 ms
+	// ComputerCard smooths the Z reading with a ~60 Hz LPF that starts at
+	// zero, updated every 4th sample: with the switch Up (raw ~4095) the
+	// smoothed value only crosses the Up threshold (>3000) after ~670
+	// samples. Latch well after full convergence (~9 time constants;
+	// chorgan/offair use the same 100 ms), and only from a stable reading.
+	static constexpr uint32_t kBootSettleSamples = 4800;  // 100 ms
+	static constexpr uint32_t kRoleStableSamples = 480;   // 10 ms unchanged
 	static constexpr uint32_t kLongPressSamples = 48000;  // 1 s
 	static constexpr uint32_t kDoubleTapSamples = 16800;  // 350 ms window
 	static constexpr uint32_t kDrumPulseSamples = 480;    // 10 ms triggers
@@ -82,6 +88,8 @@ private:
 	// -- boot / role --------------------------------------------------
 	uint32_t sampleCounter_ = 0;
 	bool roleLatched_ = false;
+	Switch bootSwitch_ = Switch::Middle;
+	uint32_t bootStable_ = 0;
 	Role role_ = kLeader;
 
 	// -- bank / config adoption ---------------------------------------
@@ -93,13 +101,18 @@ private:
 	bool running_ = false;
 	bool internalRun_ = false;     // follower running on internal clock
 	uint32_t tempoUspq_ = 500000;  // current file/live tempo (leader)
-	bool tempoKnobPicked_ = false;
 	bool volKnobPicked_ = false;   // Y knob (volume)
-	int32_t bootKnobX_ = -1;
 	int32_t bootKnobY_ = -1;
 	uint32_t lastStopUs_ = 0;      // DAW loop-wrap debounce
 	uint8_t pendingSong_ = 0xFF;
 	uint32_t lastClockTick_ = 0xFFFFFFFF; // leader 0xF8 dedup (incl. tick 0)
+	// Follower clock-domain position: advances with the DLL rate and NEVER
+	// folds at the song loop — the received clock count is monotonic, so
+	// the DLL must compare against a monotonic local phase (feeding it the
+	// folded sequencer phase caused a resync storm after the first wrap).
+	uint64_t extPhaseQ16_ = 0;
+	bool freewheeling_ = false;    // clock lost; playing at last tempo
+	uint32_t prevClockTUs_ = 0;    // diagnostics: worst clock gap
 
 	// -- loop-roll (Main knob) ----------------------------------------
 	// While engaged, the dispatch position loops a window while
@@ -129,7 +142,6 @@ private:
 
 	// -- remote (peer-forwarded) values -------------------------------
 	int32_t remoteCv_[2] = { 0, 0 };
-	uint16_t remoteCvLsb_[2] = { 0, 0 };
 	bool remotePulse_[2] = { false, false };
 	uint32_t remoteCvAtUs_[2] = { 0, 0 };
 	uint32_t remotePulseAtUs_[2] = { 0, 0 };

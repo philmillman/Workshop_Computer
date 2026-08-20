@@ -18,19 +18,21 @@ struct QueueSink : MidiParser::Sink {
 	void OnRealtime(uint8_t status) override
 	{
 		MidiInEvent ev{ time_us_32(), status, 0, 0 };
-		gShared.midiIn.Push(ev);
+		if (!gShared.midiIn.Push(ev))
+			gShared.diagMidiInDrops = gShared.diagMidiInDrops + 1;
 	}
 	void OnMessage(uint8_t status, uint8_t d1, uint8_t d2) override
 	{
 		MidiInEvent ev{ time_us_32(), status, d1, d2 };
-		gShared.midiIn.Push(ev);
+		if (!gShared.midiIn.Push(ev))
+			gShared.diagMidiInDrops = gShared.diagMidiInDrops + 1;
 	}
 };
 QueueSink gSink;
 
 // Last CV values actually sent, for on-change suppression
 uint16_t gCvSent[2] = { 0xFFFF, 0xFFFF };
-uint32_t gCvLastSendUs = 0;
+uint32_t gCvSentAtUs[2] = { 0, 0 };
 
 } // namespace
 
@@ -45,14 +47,35 @@ void MidiLink::Send(uint8_t status, uint8_t d1, uint8_t d2, uint8_t len)
 {
 	uint8_t buf[3] = { status, d1, d2 };
 	if (len < 1 || len > 3) return;
+
+	// A stream_write can accept only part of a message when the TX FIFO
+	// is full (the ComputerCard examples warn about exactly this). A
+	// half-written message leaves the USB-MIDI packetizer mid-message and
+	// later messages — including 0xF8 clocks — get eaten, which starved
+	// the follower's clock under CV-forwarding load. Pump USB and finish
+	// the message; give up whole only if the host stalls outright.
+	uint32_t sent = 0;
+	uint32_t t0 = time_us_32();
 	if (gShared.usbHostMode) {
 		if (gMidiDevAddr == 0 || !tuh_midi_configured(gMidiDevAddr)) return;
-		uint8_t nCables = tuh_midih_get_num_tx_cables(gMidiDevAddr);
-		if (nCables < 1) return;
-		tuh_midi_stream_write(gMidiDevAddr, 0, buf, len);
+		if (tuh_midih_get_num_tx_cables(gMidiDevAddr) < 1) return;
+		while (sent < len) {
+			sent += tuh_midi_stream_write(gMidiDevAddr, 0, buf + sent, len - sent);
+			if (sent < len) {
+				if (time_us_32() - t0 > 2000) return;
+				tuh_midi_stream_flush(gMidiDevAddr);
+				tuh_task();
+			}
+		}
 	} else {
 		if (!tud_midi_mounted()) return;
-		tud_midi_stream_write(0, buf, len);
+		while (sent < len) {
+			sent += tud_midi_stream_write(0, buf + sent, len - sent);
+			if (sent < len) {
+				if (time_us_32() - t0 > 2000) return;
+				tud_task();
+			}
+		}
 	}
 }
 
@@ -96,32 +119,50 @@ void MidiLink::TaskHost()
 
 void MidiLink::ForwardCv(uint8_t fwdBits)
 {
-	uint32_t now = time_us_32();
-	if (now - gCvLastSendUs < kCvFwdMinIntervalUs) return;
 	if (!Connected()) return;
+	uint32_t now = time_us_32();
 
-	static const uint8_t msbCc[2] = { kCcCv1Msb, kCcCv2Msb };
-	static const uint8_t lsbCc[2] = { kCcCv1Lsb, kCcCv2Lsb };
+	static const uint8_t bendChan[2] = { kCvBendChannel1, kCvBendChannel2 };
 	bool sent = false;
 
 	for (int i = 0; i < 2; i++) {
 		if (!(fwdBits & (1 << i))) continue;
+		if (now - gCvSentAtUs[i] < kCvFwdMinIntervalUs) continue;
 		uint16_t v14 = CvTo14(gShared.cvFwd[i]);
-		// Suppress sub-LSB(7) wiggle so idle inputs stay quiet
-		if ((v14 >> 7) == (gCvSent[i] >> 7) &&
-		    ((v14 ^ gCvSent[i]) & 0x7F) < 2 && gCvSent[i] != 0xFFFF)
+		// Suppress small wiggle (ADC noise) so idle inputs stay quiet —
+		// but refresh periodically so a static CV never reads as stale.
+		int32_t diff = (int32_t)v14 - (int32_t)gCvSent[i];
+		bool changed = gCvSent[i] == 0xFFFF || diff <= -8 || diff >= 8;
+		if (!changed && now - gCvSentAtUs[i] < kCvKeepAliveUs)
 			continue;
-		uint8_t status = (uint8_t)(0xB0 | kLinkChannel);
-		Send(status, lsbCc[i], v14 & 0x7F, 3);
-		Send(status, msbCc[i], (v14 >> 7) & 0x7F, 3); // MSB last: applies atomically
+		// Pitch bend: one atomic 3-byte message per value
+		Send((uint8_t)(0xE0 | bendChan[i]), v14 & 0x7F, (v14 >> 7) & 0x7F, 3);
 		gCvSent[i] = v14;
+		gCvSentAtUs[i] = now;
 		sent = true;
 	}
-	if (sent) {
-		gCvLastSendUs = now;
-		if (gShared.usbHostMode && gMidiDevAddr != 0)
-			tuh_midi_stream_flush(gMidiDevAddr);
-	}
+	if (sent && gShared.usbHostMode && gMidiDevAddr != 0)
+		tuh_midi_stream_flush(gMidiDevAddr);
+}
+
+void MidiLink::MirrorDiag()
+{
+	static uint32_t lastUs = 0;
+	uint32_t now = time_us_32();
+	if (now - lastUs < kDiagMirrorIntervalUs) return;
+	if (!Connected()) return;
+	lastUs = now;
+
+	const uint32_t v[7] = {
+		gShared.diagResyncs, gShared.diagFreewheels, gShared.diagStopsRx,
+		gShared.diagStartsRx, gShared.diagMaxGapMs / 100,
+		gShared.diagMidiInDrops, gShared.diagOverrun,
+	};
+	for (int i = 0; i < 7; i++)
+		Send((uint8_t)(0xB0 | kLinkChannel), (uint8_t)(kCcDiagBase + i),
+		     (uint8_t)(v[i] > 127 ? 127 : v[i]), 3);
+	if (gShared.usbHostMode && gMidiDevAddr != 0)
+		tuh_midi_stream_flush(gMidiDevAddr);
 }
 
 void MidiLink::HostMounted(uint8_t devAddr)

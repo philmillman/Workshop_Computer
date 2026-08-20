@@ -86,6 +86,7 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
       <span class="pill" id="stPlaying">–</span>
       <span class="pill" id="stBpm">–</span>
       <span class="pill" id="stLinked">–</span>
+      <span class="hint" id="stDiag"></span>
       <span style="flex:1"></span>
       <button id="btnPlay">Play</button>
       <button id="btnStop">Stop</button>
@@ -598,7 +599,7 @@ function decodeBankDir(bytes) {
       root: bytes[o + 24],
       assignNote: bytes[o + 25],
       flags: bytes[o + 26],
-      choke: bytes[o + 27],
+      choke: bytes[o + 27] <= 4 ? bytes[o + 27] : 0, // junk byte = none
       dataCrc: readU32(bytes, o + 28),
     });
   }
@@ -1309,6 +1310,17 @@ async function pollStatus() {
     $("stBpm").textContent = `${st.bpm} BPM`;
     $("stLinked").textContent = st.linked ? "linked" : "no link";
     $("stLinked").className = "pill" + (st.linked ? " on" : "");
+    if (st.diag) {
+      const fmt = d =>
+        `${d.rs} resync · ${d.fw} freewheel · gap ${d.gap}ms · ` +
+        `${d.stp} stop/${d.str} start rx · ${d.drp} drops` +
+        (d.ovr ? " · CPU OVERRUN" : "");
+      $("stDiag").textContent = `this module — ${fmt(st.diag)}` +
+        (st.peerSeen ? `  |  peer (last mirrored) — ${fmt(st.peer)}` : "");
+      $("stDiag").style.color =
+        (st.diag.ovr || st.diag.drp > 0 || (st.peerSeen && st.peer.ovr))
+          ? "var(--err)" : "";
+    }
   } catch (e) { /* transient */ }
   pollTimer = setTimeout(pollStatus, 2000);
 }
@@ -1346,7 +1358,7 @@ function renderSongs() {
     hookDrop(cell, files => importMidi(files.find(isMidiFile) || files[0], i));
     cell.querySelector('[data-act="active"]').onclick = async () => {
       state.config.activeSong = i;
-      await pushConfig();
+      await pushConfig("activeSong");
       renderSongs();
     };
     const clearBtn = cell.querySelector('[data-act="clear"]');
@@ -1478,7 +1490,7 @@ function renderKit() {
       <div class="meta">${has ? `${(s.entry.lengthFrames / C.SAMPLE_RATE).toFixed(2)} s${s.onCard && !s.dirty ? " · on card" : ""}` : "empty"}</div>
       <div class="row" style="margin-top:4px">
         <label class="hint">note <input type="number" min="0" max="127" value="${s.entry.assignNote}" data-note style="width:60px"></label>
-        <label class="hint">choke <select data-choke>${[0,1,2,3,4].map(g => `<option ${s.entry.choke === g ? "selected" : ""}>${g}</option>`).join("")}</select></label>
+        <label class="hint">choke <select data-choke>${[0,1,2,3,4].map(g => `<option value="${g}" ${s.entry.choke === g ? "selected" : ""}>${g === 0 ? "none" : g}</option>`).join("")}</select></label>
       </div>
       <div class="row" style="margin-top:4px">
         ${s.pcm ? `<button data-act="play">▶</button>` : ""}
@@ -1598,7 +1610,6 @@ function renderConfig() {
 
   grid.innerHTML = `
     <label class="cfg">Engine mode ${sel(["melodic", "percussive"], c.engineMode, 'data-k="engineMode"')}</label>
-    <label class="cfg">Internal tempo <input type="number" data-k="tempoBpmX10" data-scale="10" min="40" max="240" step="0.5" value="${c.tempoBpmX10 / 10}" style="width:70px"></label>
     <label class="cfg">CV Out 1 source ${srcSel(0, 'data-src="0"')}</label>
     <label class="cfg">CV Out 2 source ${srcSel(1, 'data-src="1"')}</label>
     <label class="cfg">Pulse Out 1 source ${srcSel(2, 'data-src="2"')}</label>
@@ -1618,7 +1629,7 @@ function renderConfig() {
     const scale = +(el.dataset.scale || 1);
     c[el.dataset.k] = Math.round((+el.value !== undefined && el.tagName === "INPUT" ? +el.value : +el.value) * scale) || +el.value * scale || +el.value;
     if (el.tagName === "SELECT") c[el.dataset.k] = +el.value;
-    await pushConfig();
+    await pushConfig(el.dataset.k);
   });
   grid.querySelectorAll("[data-src]").forEach(el => el.onchange = async () => {
     const bit = +el.dataset.src;
@@ -1632,9 +1643,15 @@ function renderConfig() {
   });
 }
 
-async function pushConfig() {
+async function pushConfig(changedKey) {
   if (!state.connected) return;
   try {
+    // The local copy may be stale: engine mode and active song can change
+    // on the hardware (long-press, double-tap). Refresh those from live
+    // status before writing, so a routing tweak doesn't revert them.
+    const st = await state.proto.transport("?");
+    if (changedKey !== "engineMode") state.config.engineMode = st.mode;
+    if (changedKey !== "activeSong") state.config.activeSong = st.song;
     await state.proto.setConfig(state.config);
     log("Config applied.");
   } catch (e) {

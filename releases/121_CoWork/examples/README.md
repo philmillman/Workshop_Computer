@@ -14,6 +14,7 @@ Drop onto a song slot; the channel mapping is auto-suggested
 | `01_first_test.mid` | 2 bars, 120 BPM — simplest smoke test: 4-on-floor kick, snare 2+4, 8th hats, quarter-note bass, 8th-note lead arp, one pad chord per bar |
 | `02_groove.mid` | 4 bars, 100 BPM — velocity dynamics, ghost notes, syncopated bass, sustained pad chords, open-hat chokes against closed hats, tom fill into the loop |
 | `03_tempo_ride.mid` | 8 bars accelerating 90→132 BPM — exercises the tempo map (leader follows it; a follower slaves to the leader's clock through the changes) |
+| `04_long_haul.mid` | 64 bars, ~2:20 at 112 BPM — a full arrangement (intro, verses, choruses, break, build, outro with a final ritardando) for long-run stability: sustained clock lock on a linked pair, a ~2700-event stream, section dynamics, crashes and fills |
 
 ## Samples (`samples/`)
 

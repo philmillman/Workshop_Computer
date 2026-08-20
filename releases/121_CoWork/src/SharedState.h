@@ -101,6 +101,21 @@ struct Shared {
 	// CV forwarding mailboxes (core 0 writes latest, core 1 rate-limits)
 	volatile int32_t cvFwd[2] = {0, 0};
 
+	// Diagnostics (monotonic counters, exposed in the T? JSON) — turn
+	// "the follower died" field reports into data.
+	volatile uint32_t diagResyncs = 0;     // DLL hard resyncs
+	volatile uint32_t diagFreewheels = 0;  // clock-loss freewheel entries
+	volatile uint32_t diagStopsRx = 0;     // 0xFC received
+	volatile uint32_t diagStartsRx = 0;    // 0xFA received
+	volatile uint32_t diagMaxGapMs = 0;    // worst clock gap seen
+	volatile uint32_t diagMidiInDrops = 0; // midiIn queue overflow (core 1)
+	volatile uint32_t diagOverrun = 0;     // audio budget overrun latch
+
+	// Peer's mirrored diagnostics (received over the link, 7-bit capped;
+	// gap arrives as gap/100 ms). Index order matches kCcDiagBase docs.
+	volatile uint32_t peerDiag[7] = {0, 0, 0, 0, 0, 0, 0};
+	volatile uint32_t peerDiagSeen = 0;
+
 	// Remote (peer-forwarded) input values, written by core 0 from midiIn
 	// consumption — kept here only for status/debug visibility.
 	volatile uint32_t uploadActive = 0; // CDC transfer in progress (LED)

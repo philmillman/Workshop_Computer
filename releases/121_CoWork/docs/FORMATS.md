@@ -134,7 +134,7 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 | 4   | 2    | version                  | 1                                              |
 | 6   | 1    | engine_mode              | 0 melodic, 1 percussive                        |
 | 7   | 1    | active_song              | 0..slots-1                                     |
-| 8   | 2    | tempo_bpm_x10            | internal/fallback tempo, 400–2400              |
+| 8   | 2    | tempo_bpm_x10            | 400–2400; only seeds the follower's clock-recovery estimate at boot — playback tempo always comes from the song's tempo map |
 | 10  | 1    | swing                    | 50–75 (%)                                      |
 | 11  | 1    | out_src_bits             | bit0 CV1, bit1 CV2, bit2 Pulse1, bit3 Pulse2: 0 = local, 1 = remote |
 | 12  | 1    | fwd_enable               | bit0 CV In1, bit1 CV In2, bit2 Pulse In1, bit3 Pulse In2 |
@@ -210,18 +210,24 @@ Rules:
 - Transport/clock: standard MIDI realtime — `0xF8` clock at 24 PPQN, `0xFA`
   start, `0xFB` continue, `0xFC` stop. The leader transmits; the follower
   consumes (from the peer module or any DAW).
-- CV/pulse forwarding uses **MIDI channel 16** (status nibble channel 15):
+- Pulse forwarding uses **MIDI channel 16**; CV forwarding uses **pitch
+  bend** on channels 15 (CV 1) and 16 (CV 2) — a single 3-byte message
+  carries all 14 bits atomically. (v1 used CC MSB/LSB pairs, which keep
+  pairing state across two messages: with both channels streaming, one
+  lost message desyncs every later value.)
 
-| Signal          | Message                          | Rate                        |
-|-----------------|----------------------------------|-----------------------------|
-| CV In 1         | CC 20 (MSB) + CC 52 (LSB), 14-bit | on-change, ≤ 200 Hz        |
-| CV In 2         | CC 21 (MSB) + CC 53 (LSB)         | on-change, ≤ 200 Hz        |
-| Pulse In 1 edge | Note On/Off 60, velocity 127      | edge-triggered              |
-| Pulse In 2 edge | Note On/Off 62, velocity 127      | edge-triggered              |
+| Signal          | Message                        | Rate                                  |
+|-----------------|--------------------------------|---------------------------------------|
+| CV In 1         | Pitch bend, channel 15, 14-bit | on-change ≤ 200 Hz + 250 ms keep-alive |
+| CV In 2         | Pitch bend, channel 16, 14-bit | on-change ≤ 200 Hz + 250 ms keep-alive |
+| Pulse In 1 edge | Note On/Off 60 ch16, vel 127   | edge-triggered                        |
+| Pulse In 2 edge | Note On/Off 62 ch16, vel 127   | edge-triggered                        |
 
 CV encoding: `value14 = clamp(cv + 2048, 0, 4095) << 2` where `cv` is the
-±2047 12-bit input reading; decode `cv = (value14 >> 2) - 2048`. MSB CC is
-sent after the LSB CC so a value applies atomically on MSB receipt.
+±2047 12-bit input reading; decode `cv = (value14 >> 2) - 2048`. 0 V maps
+exactly to bend center (8192). Only patched inputs are forwarded; unchanged
+values are re-sent every 250 ms as a keep-alive.
 
 Received remote values expire after 500 ms without update (outputs configured
-as "remote" fall back to their local derivation).
+as "remote" fall back to their local derivation) — with the keep-alive that
+only happens on genuine link or routing loss.

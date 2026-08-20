@@ -28,6 +28,7 @@ public:
 		lastClockUs_ = 0;
 		corrQ16_ = 0;
 		lastErrQ16_ = 0;
+		intervals_ = 0;
 	}
 
 	// A 0xFA restarts tick counting from zero (first 0xF8 = tick 0).
@@ -46,8 +47,20 @@ public:
 	{
 		if (haveLast_) {
 			uint32_t interval = tUs - lastUs_;
-			if (interval >= kMinIntervalUs && interval <= kMaxIntervalUs)
-				periodEstUs_ += ((int32_t)interval - (int32_t)periodEstUs_) >> 3;
+			if (interval >= kMinIntervalUs && interval <= kMaxIntervalUs) {
+				// Warm-up: the estimate starts from a config default that
+				// can be far from the leader's tempo, and a 1/8 EMA takes
+				// ~16 clocks (two beats) to learn it — audibly out of sync
+				// on the first run. Adapt fast first, then settle into the
+				// jitter-tolerant 1/8 EMA.
+				intervals_++;
+				if (intervals_ == 1)
+					periodEstUs_ = interval;
+				else if (intervals_ < 8)
+					periodEstUs_ += ((int32_t)interval - (int32_t)periodEstUs_) >> 1;
+				else
+					periodEstUs_ += ((int32_t)interval - (int32_t)periodEstUs_) >> 3;
+			}
 		}
 		lastUs_ = tUs;
 		lastClockUs_ = tUs;
@@ -101,6 +114,10 @@ public:
 		corrQ16_ = 0;
 	}
 
+	// Entering clock-loss freewheel: drop the stale phase correction so
+	// the freewheel rate is the clean period estimate.
+	void OnFreewheel() { corrQ16_ = 0; lastErrQ16_ = 0; }
+
 	// Q16 tick increment per 48 kHz sample.
 	uint32_t TickIncQ16() const
 	{
@@ -133,6 +150,7 @@ private:
 	uint32_t lastUs_ = 0;
 	uint32_t lastClockUs_ = 0;
 	uint32_t rxCount_ = 0;
+	uint32_t intervals_ = 0;
 	int32_t corrQ16_ = 0;
 	int64_t lastErrQ16_ = 0;
 	bool haveLast_ = false;

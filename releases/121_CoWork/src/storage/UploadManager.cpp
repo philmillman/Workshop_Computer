@@ -276,17 +276,37 @@ void UploadManager::CmdTransport()
 
 	switch (sub) {
 	case '?': {
-		char json[192];
+		char json[512];
 		int n = snprintf(json, sizeof(json),
 			"{\"playing\":%s,\"role\":\"%s\",\"linked\":%s,"
-			"\"mode\":%lu,\"song\":%lu,\"bpm\":%lu.%lu,\"tick\":%lu}\n",
+			"\"mode\":%lu,\"song\":%lu,\"bpm\":%lu.%lu,\"tick\":%lu,"
+			"\"diag\":{\"rs\":%lu,\"fw\":%lu,\"stp\":%lu,\"str\":%lu,"
+			"\"gap\":%lu,\"drp\":%lu,\"ovr\":%lu},"
+			"\"peerSeen\":%s,"
+			"\"peer\":{\"rs\":%lu,\"fw\":%lu,\"stp\":%lu,\"str\":%lu,"
+			"\"gap\":%lu,\"drp\":%lu,\"ovr\":%lu}}\n",
 			gShared.transportRunning ? "true" : "false",
 			gShared.statusRole ? "follower" : "leader",
 			gShared.peerConnected ? "true" : "false",
 			(unsigned long)gShared.statusMode, (unsigned long)gShared.statusSong,
 			(unsigned long)(gShared.statusBpmX10 / 10),
 			(unsigned long)(gShared.statusBpmX10 % 10),
-			(unsigned long)gShared.statusTick);
+			(unsigned long)gShared.statusTick,
+			(unsigned long)gShared.diagResyncs,
+			(unsigned long)gShared.diagFreewheels,
+			(unsigned long)gShared.diagStopsRx,
+			(unsigned long)gShared.diagStartsRx,
+			(unsigned long)gShared.diagMaxGapMs,
+			(unsigned long)gShared.diagMidiInDrops,
+			(unsigned long)gShared.diagOverrun,
+			gShared.peerDiagSeen ? "true" : "false",
+			(unsigned long)gShared.peerDiag[0],
+			(unsigned long)gShared.peerDiag[1],
+			(unsigned long)gShared.peerDiag[2],
+			(unsigned long)gShared.peerDiag[3],
+			(unsigned long)(gShared.peerDiag[4] * 100), // sent as gap/100
+			(unsigned long)gShared.peerDiag[5],
+			(unsigned long)gShared.peerDiag[6]);
 		if (n > 0) WriteAll((const uint8_t *)json, (uint32_t)n);
 		break;
 	}

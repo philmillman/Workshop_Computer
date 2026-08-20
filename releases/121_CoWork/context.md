@@ -37,8 +37,18 @@ Read `docs/FORMATS.md` first: it is the contract between `src/` and
 - The USB power circuit may only settle on a cold power-up; an RP2040
   reset alone can leave DFP/UFP stale (midi_device_host example comment).
 - JEDEC flash detect must run single-core, before core 1 launches.
+- The knob/switch smoothing filters start at zero and take ~10 ms per time
+  constant (60 Hz LPF, one update per 4 samples). A switch held Up doesn't
+  READ as Up until ~14 ms in — anything latched from boot-time knob/switch
+  values (role, pickup baselines) must wait ~100 ms (kBootSettleSamples).
 - Sequence/sample data is validated on parse (`ValidateSeqSlot`,
   `ValidateBankHeader`, `SlotIsPopulated`) — firmware never trusts flash.
+- MIDI TX must COMPLETE every message: `*_midi_stream_write` accepts
+  partial bytes when the FIFO is full, and a half-written message makes
+  the USB-MIDI packetizer eat later messages (including 0xF8 clocks).
+  `MidiLink::Send` pumps USB until the message is whole.
+- Never forward unpatched inputs over the link: they carry the
+  normalisation probe's pseudorandom signal. Gate on `Connected()`.
 
 ## Host-side testing
 

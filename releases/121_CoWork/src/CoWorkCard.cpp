@@ -49,10 +49,10 @@ void CoWorkCard::OnNoteOff(uint8_t part, uint8_t note)
 
 void CoWorkCard::OnTempo(uint32_t uspq)
 {
-	// The leader honors the file's tempo map until the knob takes over;
-	// the follower slaves to received clock and ignores TEMPO events.
-	if (role_ == kLeader && !tempoKnobPicked_)
-		tempoUspq_ = uspq;
+	// The song's MIDI tempo map is the source of truth. A follower on
+	// external clock ignores this (its rate comes from the DLL), but the
+	// value still tracks so an internal-clock fallback plays correctly.
+	tempoUspq_ = uspq;
 }
 
 void CoWorkCard::OnLoopWrap()
@@ -154,7 +154,6 @@ void CoWorkCard::LatchRoleAtBoot()
 	role_ = (SwitchVal() == Switch::Up) ? kLeader : kFollower;
 	gShared.statusRole = (role_ == kFollower) ? 1 : 0;
 	roleLatched_ = true;
-	bootKnobX_ = KnobVal(Knob::X);
 	bootKnobY_ = KnobVal(Knob::Y);
 	clock_.Reset(cfg_.tempo_bpm_x10);
 }
@@ -241,16 +240,24 @@ void CoWorkCard::ConsumeMidiIn()
 			}
 			switch (ev.status) {
 			case kMidiClock:
-				clock_.OnClock(ev.tUs, loopLenTicks_ ? masterPhaseQ16_
-				                                     : seq_.PhaseQ16());
+				if (prevClockTUs_) {
+					uint32_t gapMs = (ev.tUs - prevClockTUs_) / 1000;
+					if (gapMs > gShared.diagMaxGapMs)
+						gShared.diagMaxGapMs = gapMs;
+				}
+				prevClockTUs_ = ev.tUs;
+				freewheeling_ = false;
+				clock_.OnClock(ev.tUs, extPhaseQ16_);
 				internalRun_ = false;
 				break;
 			case kMidiStart:
+				gShared.diagStartsRx = gShared.diagStartsRx + 1;
 				// DAW loop-wrap debounce (clockwork): a Start right
 				// after a Stop is a wrap, not a restart.
 				if (ev.tUs - lastStopUs_ > 100000) {
 					clock_.OnStart();
 					seq_.Reset();
+					extPhaseQ16_ = 0;
 				}
 				engine_.ReleaseAll();
 				ClearGates();
@@ -262,6 +269,7 @@ void CoWorkCard::ConsumeMidiIn()
 				StartTransport(false);
 				break;
 			case kMidiStop:
+				gShared.diagStopsRx = gShared.diagStopsRx + 1;
 				StopTransport();
 				break;
 			default:
@@ -273,23 +281,24 @@ void CoWorkCard::ConsumeMidiIn()
 		uint8_t type = ev.status & 0xF0;
 		uint8_t chan = ev.status & 0x0F;
 
+		// Peer-forwarded CV: pitch bend, one atomic message per value
+		if (type == 0xE0 && (chan == kCvBendChannel1 || chan == kCvBendChannel2)) {
+			int i = (chan == kCvBendChannel1) ? 0 : 1;
+			remoteCv_[i] = CvFrom14(((uint16_t)ev.d2 << 7) | ev.d1);
+			remoteCvAtUs_[i] = ev.tUs;
+			continue;
+		}
+
 		if (chan == kLinkChannel) {
-			// Peer-forwarded CV / pulses
-			if (type == 0xB0) {
-				switch (ev.d1) {
-				case kCcCv1Lsb: remoteCvLsb_[0] = ev.d2; break;
-				case kCcCv2Lsb: remoteCvLsb_[1] = ev.d2; break;
-				case kCcCv1Msb:
-					remoteCv_[0] = CvFrom14(((uint16_t)ev.d2 << 7) | remoteCvLsb_[0]);
-					remoteCvAtUs_[0] = ev.tUs;
-					break;
-				case kCcCv2Msb:
-					remoteCv_[1] = CvFrom14(((uint16_t)ev.d2 << 7) | remoteCvLsb_[1]);
-					remoteCvAtUs_[1] = ev.tUs;
-					break;
-				default: break;
-				}
-			} else if (type == 0x90 || type == 0x80) {
+			// Peer diagnostics mirror
+			if (type == 0xB0 && ev.d1 >= kCcDiagBase &&
+			    ev.d1 < kCcDiagBase + 7) {
+				gShared.peerDiag[ev.d1 - kCcDiagBase] = ev.d2;
+				gShared.peerDiagSeen = 1;
+				continue;
+			}
+			// Peer-forwarded pulses
+			if (type == 0x90 || type == 0x80) {
 				bool on = (type == 0x90) && ev.d2 > 0;
 				if (ev.d1 == kNotePulse1) { remotePulse_[0] = on; remotePulseAtUs_[0] = ev.tUs; }
 				if (ev.d1 == kNotePulse2) { remotePulse_[1] = on; remotePulseAtUs_[1] = ev.tUs; }
@@ -430,17 +439,7 @@ uint32_t CoWorkCard::LoopZoneTicks(int zone) const
 
 void CoWorkCard::HandleKnobs()
 {
-	// X: tempo (leader) / internal fallback tempo (follower), with pickup
-	int32_t kx = KnobVal(Knob::X);
-	if (!tempoKnobPicked_ && bootKnobX_ >= 0 &&
-	    (kx - bootKnobX_ > kKnobPickup || bootKnobX_ - kx > kKnobPickup))
-		tempoKnobPicked_ = true;
-	if (tempoKnobPicked_) {
-		uint32_t bpmX10 = 400 + ((uint32_t)kx * 2000u) / 4095u;
-		if (role_ == kLeader)
-			tempoUspq_ = (uint32_t)(600000000ull * 10ull / bpmX10 / 10ull);
-		cfg_.tempo_bpm_x10 = (uint16_t)bpmX10;
-	}
+	// X: reserved — the song's MIDI tempo map is the source of truth.
 
 	// Y: master volume, config value until the knob moves
 	int32_t ky = KnobVal(Knob::Y);
@@ -484,30 +483,38 @@ void CoWorkCard::AdvanceSequencer()
 	bool looping = loopLenTicks_ > 0;
 
 	if (role_ == kLeader || internalRun_) {
-		uint32_t inc = (role_ == kLeader)
-			? Sequencer::TickIncForTempo(tempoUspq_)
-			: Sequencer::TickIncForBpmX10(cfg_.tempo_bpm_x10);
+			// Leader and internal-clock fallback both play the song's own tempo
+		uint32_t inc = Sequencer::TickIncForTempo(tempoUspq_);
 		seq_.SetTickIncQ16(inc);
 	} else {
-		// Follower on external clock. While the loop-roll is engaged the
-		// DLL tracks the free-running master phase, not the rolled one.
-		if (clock_.TimedOut(nowUs_)) {
-			StopTransport();
-			return;
+		// Follower on external clock. The DLL runs in the monotonic
+		// clock domain (extPhaseQ16_) — the sequencer folds its own
+		// phase at the song loop, and the loop-roll folds the master
+		// phase, but the received clock count never folds.
+		// Clock loss: freewheel at the last known tempo instead of
+		// stopping — a USB hiccup or leader stall shouldn't kill the
+		// performance. The DLL re-locks (or hard-resyncs) when clock
+		// returns; stopping stays a user action or a received 0xFC.
+		if (!freewheeling_ && clock_.TimedOut(nowUs_)) {
+			freewheeling_ = true;
+			clock_.OnFreewheel();
+			gShared.diagFreewheels = gShared.diagFreewheels + 1;
 		}
 		if (clock_.NeedsResync()) {
 			engine_.ReleaseAll();
 			ClearGates();
+			gShared.diagResyncs = gShared.diagResyncs + 1;
+			extPhaseQ16_ = clock_.TargetPhaseQ16();
+			seq_.SeekTick(extPhaseQ16_);
 			if (looping) {
-				masterPhaseQ16_ = clock_.TargetPhaseQ16();
+				masterPhaseQ16_ = seq_.PhaseQ16(); // folded by SeekTick
 				loopAnchor_ = ((uint32_t)(masterPhaseQ16_ >> 16) / loopLenTicks_) * loopLenTicks_;
-				seq_.SeekTick(masterPhaseQ16_);
-			} else {
-				seq_.SeekTick(clock_.TargetPhaseQ16());
 			}
 			clock_.OnResync();
 		}
-		seq_.SetTickIncQ16(clock_.TickIncQ16());
+		uint32_t extInc = clock_.TickIncQ16();
+		seq_.SetTickIncQ16(extInc);
+		extPhaseQ16_ += extInc;
 	}
 
 	uint32_t adv = seq_.Advance(*this);
@@ -624,9 +631,12 @@ void CoWorkCard::RenderAndOutput()
 
 void CoWorkCard::ForwardInputs()
 {
-	// Pulse edges -> link notes, immediately
+	// Pulse edges -> link notes, immediately. Only patched jacks count:
+	// unpatched inputs carry the normalisation probe's pseudorandom
+	// signal, which used to flood the link with phantom triggers.
 	for (int i = 0; i < 2; i++) {
-		bool p = PulseIn(i);
+		bool patched = Connected(i == 0 ? Input::Pulse1 : Input::Pulse2);
+		bool p = patched && PulseIn(i);
 		if (p != lastPulseIn_[i]) {
 			lastPulseIn_[i] = p;
 			if (cfg_.fwd_enable & (i == 0 ? kOutPulse1 : kOutPulse2)) {
@@ -637,11 +647,12 @@ void CoWorkCard::ForwardInputs()
 		}
 	}
 
-	// CV mailboxes at 1 kHz; core 1 rate-limits the actual sends
+	// CV mailboxes at 1 kHz; core 1 rate-limits the actual sends.
+	// Unpatched inputs forward a steady 0 (probe noise otherwise).
 	if (++cvDecim_ >= 48) {
 		cvDecim_ = 0;
-		gShared.cvFwd[0] = CVIn1();
-		gShared.cvFwd[1] = CVIn2();
+		gShared.cvFwd[0] = Connected(Input::CV1) ? CVIn1() : 0;
+		gShared.cvFwd[1] = Connected(Input::CV2) ? CVIn2() : 0;
 	}
 }
 
@@ -700,14 +711,27 @@ void CoWorkCard::ProcessSample()
 	sampleCounter_++;
 	nowUs_ = time_us_32();
 
-	// Boot settle: let the ADC mux deliver real switch/knob values first
-	if (sampleCounter_ < kBootSettleSamples) {
-		AudioOut1(0);
-		AudioOut2(0);
-		meter_.EndSample();
-		return;
+	// Boot settle: the switch/knob smoothing filters start at zero, so
+	// wait for full convergence, then require the Z reading to hold still
+	// before latching the leader/follower role from it.
+	if (!roleLatched_) {
+		if (sampleCounter_ >= kBootSettleSamples) {
+			Switch sw = SwitchVal();
+			if (sw == bootSwitch_) {
+				if (++bootStable_ >= kRoleStableSamples)
+					LatchRoleAtBoot();
+			} else {
+				bootSwitch_ = sw;
+				bootStable_ = 0;
+			}
+		}
+		if (!roleLatched_) {
+			AudioOut1(0);
+			AudioOut2(0);
+			meter_.EndSample();
+			return;
+		}
 	}
-	if (!roleLatched_) LatchRoleAtBoot();
 
 	if (HandleQuiesce()) {
 		meter_.EndSample();
@@ -732,8 +756,9 @@ void CoWorkCard::ProcessSample()
 	else if (clock_.HasClock())
 		gShared.statusBpmX10 = clock_.BpmX10();
 	else
-		gShared.statusBpmX10 = cfg_.tempo_bpm_x10;
+		gShared.statusBpmX10 = (uint32_t)(6000000000ull / tempoUspq_ / 10ull);
 
+	gShared.diagOverrun = meter_.Overrun() ? 1 : 0;
 	meter_.EndSample();
 }
 

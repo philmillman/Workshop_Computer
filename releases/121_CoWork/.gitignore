@@ -1,3 +1,4 @@
 build/
 sim/build/
 .DS_Store
+*.zip

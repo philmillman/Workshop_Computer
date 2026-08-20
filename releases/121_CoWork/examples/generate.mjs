@@ -446,6 +446,140 @@ function songTempoRide() {
   writeSMF("03_tempo_ride.mid", [meta, lead, bass, pad, drums]);
 }
 
+
+// ---- Song 4: song-length arrangement for long-run testing.
+// 64 bars (~2:17 at 112 BPM), Am-F-C-G, eight 8-bar sections:
+// intro, verse, verse, chorus, break, build, chorus, outro — with a
+// gentle ritardando over the final two bars.
+function songLongHaul() {
+  const meta = new Track();
+  meta.name("long haul");
+  meta.tempo(0, 112);
+  meta.tsig(0, 4, 2);
+  meta.tempo(62 * 4 * B, 105);
+  meta.tempo(63 * 4 * B, 96);
+
+  const lead = new Track(); lead.name("Lead");
+  const bass = new Track(); bass.name("Bass");
+  const pad = new Track(); pad.name("Pad");
+  const dr = new Track(); dr.name("Drums");
+
+  const CRASH = 49, RIM = 37;
+  const CHORDS = [
+    { r: 33, tri: [57, 60, 64] }, // Am
+    { r: 29, tri: [53, 57, 60] }, // F
+    { r: 36, tri: [60, 64, 67] }, // C
+    { r: 31, tri: [55, 59, 62] }, // G
+  ];
+  const SEC = ["intro", "verse", "verse", "chorus", "break", "build", "chorus", "outro"];
+
+  for (let bar = 0; bar < 64; bar++) {
+    const t0 = bar * 4 * B;
+    const sec = SEC[(bar / 8) | 0];
+    const ch = CHORDS[((bar % 8) / 2) | 0]; // two bars per chord
+    const secBar = bar % 8;
+
+    // ---- PAD: sustained 2-bar triads; thin in intro/break, gone in build
+    if (bar % 2 === 0 && sec !== "build") {
+      const play = sec === "break" ? bar % 4 === 0 : sec === "intro" ? bar >= 4 : true;
+      if (play)
+        for (const n of ch.tri)
+          pad.note(t0, 2, n, sec === "chorus" ? 80 : 62, 8 * B - 60);
+    }
+
+    // ---- BASS
+    if (sec === "intro" || sec === "break") {
+      if (bar % 2 === 0) bass.note(t0, 1, ch.r, 82, 4 * B - 40);
+    } else if (sec === "outro") {
+      bass.note(t0, 1, ch.r, 84, 3 * B);
+    } else if (sec === "verse") {
+      for (let e = 0; e < 8; e++)
+        bass.note(t0 + e * (B / 2), 1, e === 6 ? ch.r + 12 : ch.r,
+                  e % 2 ? 74 : 92, B / 2 - 20);
+    } else if (sec === "chorus") {
+      const riff = [[0, 0], [0.75, 0], [1.5, 0], [2, 7], [2.5, 0], [3, 10], [3.5, 12]];
+      for (const [beat, iv] of riff)
+        bass.note(t0 + beat * B, 1, ch.r + iv, iv ? 96 : 88, S + S / 2);
+    } else if (sec === "build") {
+      const div = secBar < 4 ? 2 : 4; // 8ths, then 16ths
+      for (let e = 0; e < 4 * div; e++)
+        bass.note(t0 + e * (B / div), 1, ch.r, 68 + e * 2, B / div - 15);
+    }
+
+    // ---- LEAD
+    if (sec === "verse") {
+      if (bar % 2 === 1) {
+        const m = [[0, ch.tri[2] + 12, 86, 1], [1.5, ch.tri[1] + 12, 74, 0.5],
+                   [2.5, ch.tri[0] + 12, 80, 1.25]];
+        for (const [beat, n, v, len] of m)
+          lead.note(t0 + beat * B, 0, n, v, Math.round(len * B) - 20);
+      }
+    } else if (sec === "chorus") {
+      for (let e = 0; e < 8; e++) {
+        const n = ch.tri[e % 3] + (e % 4 === 3 ? 24 : 12);
+        lead.note(t0 + e * (B / 2), 0, n, e % 2 ? 78 : 96, B / 2 - 25);
+      }
+    } else if (sec === "break") {
+      if (bar % 2 === 0) lead.note(t0 + B, 0, ch.tri[0] + 12, 58, 2 * B);
+    } else if (sec === "build") {
+      const div = secBar < 4 ? 2 : 4;
+      for (let e = 0; e < 4 * div; e++)
+        lead.note(t0 + e * (B / div), 0, ch.tri[e % 3] + 12, 64 + e * 2, B / div - 15);
+    } else if (sec === "outro") {
+      if (bar % 2 === 0 && bar < 62)
+        lead.note(t0, 0, ch.tri[2] + 12, 72, 2 * B);
+      if (bar === 62) lead.note(t0, 0, 69, 84, 6 * B); // final A4 through the ritard
+    }
+
+    // ---- DRUMS
+    const crash = (sec === "chorus" || sec === "outro") && secBar === 0;
+    if (crash) dr.note(t0, 9, CRASH, 110, 2 * B);
+    if (sec === "intro") {
+      if (bar >= 4) {
+        for (let e = 0; e < 8; e++) dr.note(t0 + e * (B / 2), 9, CH, e % 2 ? 52 : 68, S / 2);
+        if (bar >= 6) { dr.note(t0 + 1 * B, 9, RIM, 64, S); dr.note(t0 + 3 * B, 9, RIM, 64, S); }
+      }
+    } else if (sec === "verse") {
+      dr.note(t0, 9, K, 118, S);
+      dr.note(t0 + 2.5 * B, 9, K, 104, S);
+      dr.note(t0 + 1 * B, 9, SN, 108, S);
+      dr.note(t0 + 3 * B, 9, SN, 112, S);
+      if (bar % 2 === 1) dr.note(t0 + 3.75 * B, 9, SN, 44, S / 2);
+      for (let e = 0; e < 8; e++) dr.note(t0 + e * (B / 2), 9, CH, e % 2 ? 58 : 84, S / 2);
+    } else if (sec === "chorus") {
+      for (let q = 0; q < 4; q++) dr.note(t0 + q * B, 9, K, 118, S);
+      dr.note(t0 + 1 * B, 9, SN, 114, S);
+      dr.note(t0 + 3 * B, 9, SN, 118, S);
+      dr.note(t0 + 3 * B, 9, CLP, 92, S);
+      for (let e = 0; e < 8; e++) {
+        if (e === 7) dr.note(t0 + e * (B / 2), 9, OH, 92, S * 2);
+        else dr.note(t0 + e * (B / 2), 9, CH, e % 2 ? 60 : 86, S / 2);
+      }
+      dr.note(t0 + 2 * B, 9, SH, 62, S / 2);
+    } else if (sec === "break") {
+      dr.note(t0, 9, K, 108, S);
+      for (let e = 0; e < 4; e++) dr.note(t0 + (e + 0.5) * B, 9, SH, 56 + e * 4, S / 2);
+    } else if (sec === "build") {
+      for (let q = 0; q < 4; q++) dr.note(t0 + q * B, 9, K, 118, S);
+      if (secBar < 4) dr.note(t0 + 3 * B, 9, SN, 100 + secBar * 4, S);
+      else if (secBar < 7)
+        for (let e = 0; e < 8; e++) dr.note(t0 + e * (B / 2), 9, SN, 80 + e * 3, S / 2);
+      else {
+        for (let e = 0; e < 12; e++) dr.note(t0 + e * S, 9, SN, 70 + e * 4, S / 2);
+        dr.note(t0 + 3 * B, 9, TH, 104, S / 2);
+        dr.note(t0 + 3.25 * B, 9, TM, 110, S / 2);
+        dr.note(t0 + 3.5 * B, 9, TL, 116, S / 2);
+        dr.note(t0 + 3.75 * B, 9, CRASH, 96, S / 2);
+      }
+    } else if (sec === "outro") {
+      dr.note(t0, 9, K, 110 - secBar * 6, S);
+      if (secBar < 6) dr.note(t0 + 3 * B, 9, SN, 96 - secBar * 8, S);
+      for (let q = 0; q < 4; q++) dr.note(t0 + q * B, 9, RD, 66 - secBar * 4, S);
+    }
+  }
+  writeSMF("04_long_haul.mid", [meta, lead, bass, pad, dr]);
+}
+
 // ============================================================ run
 
 drums();
@@ -453,4 +587,5 @@ instruments();
 songFirstTest();
 songGroove();
 songTempoRide();
+songLongHaul();
 console.log("done");

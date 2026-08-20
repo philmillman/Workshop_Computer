@@ -250,6 +250,14 @@ test("bank directory: old layouts migrate, unknown versions reject", () => {
   assert.ok(dec19 && dec19.migrated);
   assert.equal(dec19.slots[3].assignNote, 36);
 
+  // A junk choke byte (e.g. 0xFF from a corrupt sector) reads as "none" —
+  // shared out-of-range values would otherwise choke unrelated lanes
+  const junk = C.encodeBankDir(new Array(19).fill(null).map(() => ({})), 0);
+  junk[32 + 3 * 32 + 27] = 0xFF; // slot 3 choke byte
+  new DataView(junk.buffer).setUint32(16, C.crc32(junk.subarray(32, 32 + 19 * 32)), true);
+  const dj = C.decodeBankDir(junk);
+  assert.equal(dj.slots[3].choke, 0);
+
   // Current version round-trips unflagged; future versions reject
   const cur = C.decodeBankDir(enc);
   assert.ok(cur && !cur.migrated);

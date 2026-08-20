@@ -159,6 +159,31 @@ static void TestDrumsAndChoke()
 	CHECK_EQ(e.ActiveVoices(), 0);
 }
 
+// Choke group 0 means NONE: pads without a group must never cut each
+// other (field report: the UI showed "0" as if it were a shared group).
+static void TestChokeZeroIsNone()
+{
+	auto a = MakeConst(24000, 9000);
+	auto b = MakeConst(24000, 9000);
+	Engine e;
+	e.SetPercussive(true);
+	e.SetDrumLane(0, a.data(), (uint32_t)a.size(), 0);
+	e.SetDrumLane(2, b.data(), (uint32_t)b.size(), 0);
+
+	e.DrumTrigger(0, 127);
+	int32_t oa, ob;
+	for (int i = 0; i < 480; i++) e.Render(oa, ob);
+	e.DrumTrigger(2, 127);
+	for (int i = 0; i < 480; i++) e.Render(oa, ob);
+	// Both one-shots still sounding: no cross-choke happened
+	CHECK_EQ(e.ActiveVoices(), 2);
+
+	// Retriggering the SAME lane still replaces its own voice
+	e.DrumTrigger(2, 127);
+	for (int i = 0; i < 480; i++) e.Render(oa, ob);
+	CHECK(e.ActiveVoices() <= 3); // old lane-2 voice is in fast release
+}
+
 static void TestOut2Submix()
 {
 	auto kick = MakeConst(24000, 10000);
@@ -204,6 +229,7 @@ int main()
 	TestAllocationCaps();
 	TestPadRoutingAndCap();
 	TestDrumsAndChoke();
+	TestChokeZeroIsNone();
 	TestOut2Submix();
 	TestMelodicLoopSustain();
 	return TestResult("test_engine");

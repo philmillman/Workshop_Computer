@@ -5,6 +5,7 @@
 
 #include "test_common.h"
 #include "../src/seq/ClockRecovery.h"
+#include "../src/seq/Sequencer.h"
 
 using namespace cowork;
 
@@ -144,9 +145,100 @@ static void TestOutlierRejection()
 	CHECK_EQ(before, after);
 }
 
+// Field regression: the follower died after the first song-loop wrap.
+// The received clock count is monotonic, but the sequencer phase folds at
+// the loop — comparing them made the DLL see a whole-song error and fire
+// a resync (killing all voices) on every clock. The fix runs the DLL in a
+// monotonic clock-domain phase, exactly as wired here.
+struct CountingListener : cowork::Sequencer::Listener {
+	int ons = 0;
+	void OnNoteOn(uint8_t, uint8_t, uint8_t) override { ons++; }
+	void OnNoteOff(uint8_t, uint8_t) override {}
+	void OnTempo(uint32_t) override {}
+	void OnLoopWrap() override {}
+};
+
+// Play `clocks` MIDI clocks of a looping 2-bar song at 120 BPM through the
+// follower wiring; feedFolded = the old, buggy comparison. Returns resyncs.
+static int RunFollowerLoops(int clocks, bool feedFolded, int *onsOut)
+{
+	SongBuilder b;
+	b.lengthTicks = 768; // 2 bars of 4/4
+	b.loopEnd = 768;
+	b.NoteOn(0, kPartDrums, 36, 100);
+	auto img = b.Build();
+
+	cowork::Sequencer seq;
+	CHECK(seq.Attach(img.data(), (uint32_t)img.size()));
+	ClockRecovery cr;
+	cr.Reset(1200);
+	cr.OnStart();
+
+	CountingListener l;
+	uint64_t ext = 0;
+	uint64_t timeNum48 = 0, samplesRun = 0;
+	uint32_t t = 0;
+	int resyncs = 0;
+
+	for (int c = 0; c < clocks; c++) {
+		cr.OnClock(t, feedFolded ? seq.PhaseQ16() : ext);
+		t += 20833;
+		timeNum48 += 20833ull * 48;
+		uint64_t targetSamples = timeNum48 / 1000;
+		while (samplesRun < targetSamples) {
+			if (cr.NeedsResync()) {
+				resyncs++;
+				ext = cr.TargetPhaseQ16();
+				seq.SeekTick(ext);
+				cr.OnResync();
+			}
+			uint32_t inc = cr.TickIncQ16();
+			seq.SetTickIncQ16(inc);
+			seq.Advance(l);
+			ext += inc;
+			samplesRun++;
+		}
+	}
+	if (onsOut) *onsOut = l.ons;
+	return resyncs;
+}
+
+static void TestFollowerAcrossLoopWraps()
+{
+	// 15 loops of the 2-bar song: 768 ticks / 4 = 192 clocks per loop
+	int ons = 0;
+	int resyncs = RunFollowerLoops(192 * 15, false, &ons);
+	CHECK_EQ(resyncs, 0);
+	CHECK_EQ(ons, 15); // the downbeat note fired on every single loop
+
+	// The old wiring (folded phase into the DLL) storms with resyncs
+	// after the first wrap — this is what killed the follower on hardware.
+	int onsOld = 0;
+	int resyncsOld = RunFollowerLoops(192 * 15, true, &onsOld);
+	CHECK(resyncsOld > 10);
+}
+
+static void TestWarmupFromWrongDefault()
+{
+	// First-ever run: DLL seeded at 120 BPM default, leader plays 100 BPM.
+	// The warm-up EMA must learn the real tempo within a few clocks.
+	Sim sim;
+	sim.cr.Reset(1200);
+	sim.cr.OnStart();
+	for (int i = 0; i < 16; i++)
+		sim.RunInterval(25000, 0); // 100 BPM
+	uint32_t bpm = sim.cr.BpmX10();
+	CHECK(bpm > 990 && bpm < 1010);
+	double err = sim.ErrTicks();
+	if (err < 0) err = -err;
+	CHECK(err < 2.0); // in step within two beats of the very first play
+}
+
 int main()
 {
 	TestCleanLock();
+	TestFollowerAcrossLoopWraps();
+	TestWarmupFromWrongDefault();
 	TestJitteredLock();
 	TestTempoChange();
 	TestResyncDetect();

@@ -18,9 +18,13 @@ public:
 	// Direct send (CV forwarder). len 1..3.
 	static void Send(uint8_t status, uint8_t d1, uint8_t d2, uint8_t len);
 
-	// CV forwarding: reads gShared.cvFwd, sends 14-bit CC pairs, <= 200 Hz,
-	// on change only. fwdBits = live config fwd_enable.
+	// CV forwarding: reads gShared.cvFwd, sends pitch bend, <= 200 Hz per
+	// channel, on change + keep-alive. fwdBits = live config fwd_enable.
 	static void ForwardCv(uint8_t fwdBits);
+
+	// Broadcast this module's diagnostics counters to the peer once per
+	// second (see kCcDiagBase in midi_defs.h).
+	static void MirrorDiag();
 
 	static bool Connected();
 
