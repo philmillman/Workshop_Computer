@@ -2,15 +2,15 @@
 //
 // Boot order matters:
 //  1. Voltage + 192 MHz clock (multiple of 48 MHz for clean audio).
-//  2. JEDEC flash detect — single-core, before any concurrent XIP activity.
+//  2. Flash map from the card's real flash size (ComputerCard probes the
+//     JEDEC ID in a constructor that runs before main(), single-core).
 //  3. Config load + initial bank parse (still single-core).
 //  4. Launch core 1 (USB role detect + TinyUSB + CDC protocol).
 //  5. Run() — 48 kHz audio ISR on core 0; the leader/follower role is
-//     latched from the Z switch a few ms in, once the ADC mux has settled.
+//     latched from the Z switch ~20 ms in, from a stable reading.
 
 #include "CoWorkCard.h"
 #include "usb/usb_core1.h"
-#include "storage/flash_size.h"
 #include "storage/ConfigStore.h"
 #include "storage/Banks.h"
 
@@ -34,7 +34,7 @@ int main()
 	sleep_ms(1);
 	set_sys_clock_khz(192000, true);
 
-	gFlashMap = FlashMap::Compute(cowork_detect_flash_size());
+	gFlashMap = FlashMap::Compute(gCard.FlashSizeBytes());
 
 	Config cfg = ConfigStore::LoadFromFlash(gFlashMap);
 	gShared.configStaging = cfg;

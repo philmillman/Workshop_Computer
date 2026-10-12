@@ -150,7 +150,7 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 | 38  | 86   | reserved                 | `0xFF`                                         |
 | 124 | 4    | crc32                    | over bytes 0..123                              |
 
-Lane n ↔ directory slot 2 + n.
+Lane n ↔ directory slot 3 + n (`kSlotDrum0`).
 
 ## 5. CDC protocol (`COWORK1`)
 

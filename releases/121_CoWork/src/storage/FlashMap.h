@@ -1,5 +1,6 @@
-// Runtime flash region map, computed once at boot from the JEDEC-detected
-// flash size and published to the web UI via the CDC 'I' command.
+// Runtime flash region map, computed once at boot from the flash size
+// ComputerCard probes (JEDEC ID) and published to the web UI via the CDC
+// 'I' command.
 // Pure header: no pico includes, host-testable. See docs/FORMATS.md §1.
 
 #ifndef COWORK_FLASH_MAP_H

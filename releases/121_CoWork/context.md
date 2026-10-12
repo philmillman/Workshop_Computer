@@ -36,11 +36,12 @@ Read `docs/FORMATS.md` first: it is the contract between `src/` and
   dual-role config; the ComputerCard example uses `tuh_init()`).
 - The USB power circuit may only settle on a cold power-up; an RP2040
   reset alone can leave DFP/UFP stale (midi_device_host example comment).
-- JEDEC flash detect must run single-core, before core 1 launches.
-- The knob/switch smoothing filters start at zero and take ~10 ms per time
-  constant (60 Hz LPF, one update per 4 samples). A switch held Up doesn't
-  READ as Up until ~14 ms in — anything latched from boot-time knob/switch
-  values (role, pickup baselines) must wait ~100 ms (kBootSettleSamples).
+- Flash size comes from `ComputerCard::FlashSizeBytes()` (JEDEC ID, probed
+  by a constructor before `main()`); don't add a second probe.
+- Boot-time switch/knob latches (role, pickup baselines) wait
+  `kBootSettleSamples` (20 ms) and then require a stable reading.
+  ComputerCard 0.4.0 seeds its smoothing filters from the first samples;
+  older versions settled from zero and needed ~100 ms here.
 - Sequence/sample data is validated on parse (`ValidateSeqSlot`,
   `ValidateBankHeader`, `SlotIsPopulated`) — firmware never trusts flash.
 - MIDI TX must COMPLETE every message: `*_midi_stream_write` accepts

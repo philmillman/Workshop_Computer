@@ -711,9 +711,8 @@ void CoWorkCard::ProcessSample()
 	sampleCounter_++;
 	nowUs_ = time_us_32();
 
-	// Boot settle: the switch/knob smoothing filters start at zero, so
-	// wait for full convergence, then require the Z reading to hold still
-	// before latching the leader/follower role from it.
+	// Boot settle: give the ADC mux a few cycles, then require the Z
+	// reading to hold still before latching the leader/follower role.
 	if (!roleLatched_) {
 		if (sampleCounter_ >= kBootSettleSamples) {
 			Switch sw = SwitchVal();

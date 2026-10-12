@@ -35,12 +35,11 @@ public:
 	void OnLoopWrap() override;
 
 private:
-	// ComputerCard smooths the Z reading with a ~60 Hz LPF that starts at
-	// zero, updated every 4th sample: with the switch Up (raw ~4095) the
-	// smoothed value only crosses the Up threshold (>3000) after ~670
-	// samples. Latch well after full convergence (~9 time constants;
-	// chorgan/offair use the same 100 ms), and only from a stable reading.
-	static constexpr uint32_t kBootSettleSamples = 4800;  // 100 ms
+	// ComputerCard (>= 0.4.0) seeds its knob/switch smoothing filters from
+	// the first samples instead of settling from zero, so the Z reading is
+	// valid within a few ADC mux cycles. Keep a short margin, then require a
+	// stable reading before latching the role from it.
+	static constexpr uint32_t kBootSettleSamples = 960;   // 20 ms
 	static constexpr uint32_t kRoleStableSamples = 480;   // 10 ms unchanged
 	static constexpr uint32_t kLongPressSamples = 48000;  // 1 s
 	static constexpr uint32_t kDoubleTapSamples = 16800;  // 350 ms window
