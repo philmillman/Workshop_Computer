@@ -221,6 +221,70 @@ static void TestMelodicLoopSustain()
 	CHECK_EQ(e.ActiveVoices(), 0);
 }
 
+static void TestDrumDecayKnob()
+{
+	auto cymbal = MakeConst(48000, 10000); // 2 s at 24 kHz
+	Engine e;
+	e.SetPercussive(true);
+	e.SetDrumLane(0, cymbal.data(), (uint32_t)cymbal.size(), 0);
+	int32_t a, b;
+
+	// Decay off (default): the one-shot is still sounding after 100 ms
+	e.DrumTrigger(0, 127);
+	for (int i = 0; i < 100 * 48; i++) e.Render(a, b);
+	CHECK_EQ(e.ActiveVoices(), 1);
+	e.KillAll();
+
+	// 50 ms linear decay from the hit: gone within ~60 ms (2 ms attack first)
+	e.SetDrumDecayStep(kEnvOne / (50 * 48));
+	e.DrumTrigger(0, 127);
+	int samples = 0;
+	while (e.ActiveVoices() > 0 && samples < 10000) { e.Render(a, b); samples++; }
+	CHECK(samples > 45 * 48 && samples < 60 * 48);
+
+	// Drums excluded from the decay mask: plays out again
+	e.SetReleaseScale(256, (uint8_t)(0x0F & ~(1u << kPartDrums)));
+	e.DrumTrigger(0, 127);
+	for (int i = 0; i < 100 * 48; i++) e.Render(a, b);
+	CHECK_EQ(e.ActiveVoices(), 1);
+	e.KillAll();
+}
+
+static void TestReleaseScaleKnob()
+{
+	auto pcm = MakeConst(24000, 16000);
+	Engine e;
+	e.SetPercussive(false);
+	e.SetInstrument(kPartLead, pcm.data(), (uint32_t)pcm.size(), 60, false);
+	e.SetReleaseMs(kPartLead, 60);
+	int32_t a, b;
+	auto releaseSamples = [&]() {
+		e.NoteOn(kPartLead, 60, 127);
+		for (int i = 0; i < 200; i++) e.Render(a, b);
+		e.NoteOff(kPartLead, 60);
+		int n = 0;
+		while (e.ActiveVoices() > 0 && n < 48000) { e.Render(a, b); n++; }
+		return n;
+	};
+	// As configured (60 ms; the integer Q15 step makes it ~62 ms)
+	int full = releaseSamples();
+	CHECK(full > 55 * 48 && full < 70 * 48);
+	// Knob at a quarter: ~15 ms
+	e.SetReleaseScale(64, 0x0F);
+	int quarter = releaseSamples();
+	CHECK(quarter > 12 * 48 && quarter < 20 * 48);
+	// Lead excluded from the mask: back to the configured release
+	e.SetReleaseScale(64, (uint8_t)(0x0F & ~(1u << kPartLead)));
+	int excluded = releaseSamples();
+	CHECK(excluded > 55 * 48 && excluded < 70 * 48);
+	// Scale clamps: 0 behaves as 1/64, >256 as 1x
+	e.SetReleaseScale(0, 0x0F);
+	CHECK(releaseSamples() < 5 * 48);
+	e.SetReleaseScale(1000, 0x0F);
+	int clamped = releaseSamples();
+	CHECK(clamped > 55 * 48 && clamped < 70 * 48);
+}
+
 int main()
 {
 	TestPitchTable();
@@ -232,5 +296,7 @@ int main()
 	TestChokeZeroIsNone();
 	TestOut2Submix();
 	TestMelodicLoopSustain();
+	TestDrumDecayKnob();
+	TestReleaseScaleKnob();
 	return TestResult("test_engine");
 }

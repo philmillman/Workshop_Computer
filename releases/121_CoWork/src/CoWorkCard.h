@@ -24,9 +24,11 @@ public:
 
 	virtual void ProcessSample() override;
 
-	// USBPowerState() is protected in ComputerCard; core 1 needs it for
-	// the boot-time role decision.
+	// USBPowerState() and FlashSizeBytes() are protected in ComputerCard;
+	// core 1 needs the first for the boot-time USB role decision and main()
+	// needs the second for the flash map.
 	USBPowerState_t PowerState() { return USBPowerState(); }
+	uint32_t FlashSize() const { return FlashSizeBytes(); }
 
 	// Sequencer::Listener
 	void OnNoteOn(uint8_t part, uint8_t note, uint8_t vel) override;
@@ -45,6 +47,9 @@ private:
 	static constexpr uint32_t kDoubleTapSamples = 16800;  // 350 ms window
 	static constexpr uint32_t kDrumPulseSamples = 480;    // 10 ms triggers
 	static constexpr int32_t kKnobPickup = 100;           // counts
+	static constexpr int32_t kZoneHyst = 40;              // counts, zone boundaries
+	static constexpr int32_t kProbAlways = 4080;          // Y page 1 at/above: every note
+	static constexpr int32_t kDecayFull = 4000;           // X page 1 at/above: drums play out
 
 	enum Role { kLeader = 0, kFollower = 1 };
 
@@ -70,6 +75,28 @@ private:
 	void ClearGates();
 	void TransportTap();           // single-tap action
 	uint32_t LoopZoneTicks(int zone) const;
+	static bool InsideZone(int32_t k, int zone, int n);
+	void ApplyDecayKnob();         // push decayKnob_ + decay_part_mask to the engine
+	bool DropByProbability(uint8_t part);
+	uint32_t Rand()                // xorshift32
+	{
+		uint32_t x = rng_;
+		x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+		return rng_ = x;
+	}
+	void SetSkipped(uint8_t part, uint8_t note)
+	{
+		skipped_[part][note >> 5] |= 1u << (note & 31);
+	}
+	// True (and clears the mark) if this note's on was dropped by probability
+	bool TakeSkipped(uint8_t part, uint8_t note)
+	{
+		uint32_t &w = skipped_[part][note >> 5];
+		uint32_t bit = 1u << (note & 31);
+		if (!(w & bit)) return false;
+		w &= ~bit;
+		return true;
+	}
 
 	void PushMidiOut(uint8_t status, uint8_t d1, uint8_t d2, uint8_t len)
 	{
@@ -100,8 +127,7 @@ private:
 	bool running_ = false;
 	bool internalRun_ = false;     // follower running on internal clock
 	uint32_t tempoUspq_ = 500000;  // current file/live tempo (leader)
-	bool volKnobPicked_ = false;   // Y knob (volume)
-	int32_t bootKnobY_ = -1;
+	int32_t masterVolQ12_ = 3213;  // from cfg_.master_vol (200/255)
 	uint32_t lastStopUs_ = 0;      // DAW loop-wrap debounce
 	uint8_t pendingSong_ = 0xFF;
 	uint32_t lastClockTick_ = 0xFFFFFFFF; // leader 0xF8 dedup (incl. tick 0)
@@ -117,10 +143,24 @@ private:
 	// While engaged, the dispatch position loops a window while
 	// masterPhaseQ16_ keeps running underneath (it also drives the
 	// leader's clock output so the link stays steady).
-	int loopZone_ = -1;            // 0..5 = lengths, 6 = off
+	int loopZone_ = -1;            // 0..7 = lengths, 8 = off
 	uint32_t loopLenTicks_ = 0;    // 0 = off
 	uint32_t loopAnchor_ = 0;      // window start tick
 	uint64_t masterPhaseQ16_ = 0;
+
+	// -- X/Y knob pages (Z switch position after boot) ------------------
+	// Page 1 (Z middle): X decay, Y note probability. Page 2 (Z up): X
+	// output source, Y solo. Values latch across page changes; after a
+	// change a knob is ignored until it moves (soft pickup).
+	int page_ = -1;                // 0 = page 1, 1 = page 2, -1 = not seen yet
+	int32_t baseX_ = 0, baseY_ = 0;
+	bool pickX_ = false, pickY_ = false;
+	int32_t decayKnob_ = 4095;     // full CW: releases as configured, drums play out
+	int32_t probKnob_ = 4095;      // full CW: every note plays
+	int8_t srcOverride_ = -1;      // -1 follow config, 0 all local, 1 all peer
+	uint8_t solo_ = 1;             // 0 solo pair 1, 1 both, 2 solo pair 2
+	uint32_t rng_ = 0x9E3779B9u;   // reseeded at the role latch
+	uint32_t skipped_[4][4] = {};  // per part: 128-bit set of dropped note-ons
 
 	// -- switch -------------------------------------------------------
 	uint32_t downCount_ = 0;

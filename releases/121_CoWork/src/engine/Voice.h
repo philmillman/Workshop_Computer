@@ -30,6 +30,7 @@ struct Voice {
 	uint8_t lane = 0xFF;   // drum lane, 0xFF for melodic
 	uint8_t chokeGroup = 0;
 	bool loop = false;
+	bool autoRelease = false; // enter release as soon as the attack completes (drum decay)
 
 	bool Active() const { return state != 0; }
 	bool Held() const { return state == 1 || state == 2; }
@@ -76,7 +77,7 @@ struct Voice {
 
 		if (state == 1) {
 			env += kAttackStep;
-			if (env >= kEnvOne) { env = kEnvOne; state = 2; }
+			if (env >= kEnvOne) { env = kEnvOne; state = autoRelease ? 3 : 2; }
 		} else if (state == 3) {
 			env -= releaseStep;
 			if (env <= 0) { env = 0; state = 0; return 0; }

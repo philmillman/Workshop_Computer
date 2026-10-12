@@ -41,11 +41,11 @@ panel:
     - id: CVIn1
       name: CV Forward 1
       type: cv
-      description: Forwarded to the linked module over USB as 14-bit MIDI CC; the peer can route it to its own CV outputs
+      description: Forwarded to the linked module over USB as 14-bit MIDI pitch bend; the peer can route it to its own CV outputs
     - id: CVIn2
       name: CV Forward 2
       type: cv
-      description: Forwarded to the linked module over USB as 14-bit MIDI CC
+      description: Forwarded to the linked module over USB as 14-bit MIDI pitch bend
     - id: PulseIn1
       name: Trigger Forward 1
       type: pulse
@@ -84,10 +84,10 @@ controls:
   switch:
     up:
       name: Leader (at boot)
-      description: Power up with the switch up to make this module the clock leader — it sends MIDI clock, start and stop over the USB link
+      description: Power up with the switch up to make this module the clock leader — it sends MIDI clock, start and stop over the USB link. After boot, the up position selects X/Y knob page 2 (output source, solo)
     middle:
       name: Follower (at boot)
-      description: Power up with the switch in the middle to follow received MIDI clock from the linked module or any DAW
+      description: Power up with the switch in the middle to follow received MIDI clock from the linked module or any DAW. After boot, the middle position selects X/Y knob page 1 (decay, note probability)
     down:
       name: Engine Toggle (hold)
       description: Hold about one second to toggle between the melodic engine (lead + bass) and the percussive engine (drum kit)
@@ -99,11 +99,11 @@ controls:
         name: Loop Roll
         description: Loops the playing sequence — counterclockwise to clockwise 1/4 beat (16th-note ratchet), 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; fully clockwise = no looping. The song position (and the leader's clock output) keeps running underneath, so releasing the roll drops back in where the song would have been
       x:
-        name: Reserved
-        description: Currently unused — tempo always follows the song's MIDI tempo map (a follower's rate comes from the received clock)
+        name: Decay / Output Source
+        description: Page 1 (switch middle) — decay. Melodic engine - shortens the configured lead, bass and pad releases (fully clockwise = as configured); percussive engine - adds a decay to each hit, about 10 ms to 640 ms (fully clockwise = one-shots play out). Which parts respond is set in the web editor. Page 2 (switch up) — output source. Counterclockwise half - this module's own notes on all CV and pulse outputs; clockwise half - the peer module's forwarded CV and pulse inputs. Tempo always follows the song's MIDI tempo map
       y:
-        name: Master Volume
-        description: Output level for both audio outputs
+        name: Note Probability / Solo
+        description: Page 1 (switch middle) — note probability. The chance that each sequenced note plays, fully clockwise = every note, fully counterclockwise = none; which parts respond is set in the web editor. Page 2 (switch up) — solo. Lower third - CV/pulse pair 1 only (pair 2 muted), middle - both, upper third - pair 2 only. Master volume is set in the web editor
   leds:
     - display: list
       items:

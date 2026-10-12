@@ -161,12 +161,24 @@ test("config encode/decode round-trip", () => {
   c.tempoBpmX10 = 1337;
   c.outSrcBits = 0b1010;
   c.midiChannelToPart[4] = 2;
+  c.probPartMask = 0b0101;
+  c.decayPartMask = 0b1010;
   const blob = C.encodeConfig(c);
   assert.equal(blob.length, 128);
   const d = C.decodeConfig(blob);
   assert.deepEqual(d, { ...c });
   // CRC field is valid
   assert.equal(C.readU32(blob, 124), C.crc32(blob.subarray(0, 124)));
+});
+
+test("config decode: reserved 0xFF part masks read as all parts (old blobs)", () => {
+  const blob = C.encodeConfig(C.defaultConfig());
+  assert.equal(blob[38], 0x0F);
+  assert.equal(blob[39], 0x0F);
+  blob[38] = 0xFF; blob[39] = 0xFF;
+  const d = C.decodeConfig(blob);
+  assert.equal(d.probPartMask, 0x0F);
+  assert.equal(d.decayPartMask, 0x0F);
 });
 
 // ---------------------------------------------------------------- CWSB codec

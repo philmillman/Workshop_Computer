@@ -97,6 +97,9 @@ struct Shared {
 	volatile uint32_t statusMode = 0; // 0 melodic, 1 percussive
 	volatile uint32_t statusSong = 0;
 	volatile uint32_t statusConflict = 0; // dual-leader detected
+	volatile uint32_t statusPage = 0;     // X/Y knob page: 1 (Z middle) or 2 (Z up)
+	volatile uint32_t statusSolo = 1;     // 0 solo pair 1, 1 both, 2 solo pair 2
+	volatile uint32_t statusSrc = 0;      // 0 config, 1 forced local, 2 forced peer
 
 	// CV forwarding mailboxes (core 0 writes latest, core 1 rate-limits)
 	volatile int32_t cvFwd[2] = {0, 0};

@@ -26,6 +26,11 @@ Read `docs/FORMATS.md` first: it is the contract between `src/` and
   The leader's 0xF8 output and the follower's DLL both track the MASTER
   phase during a roll — never the rolled position — so the link stays
   steady and disengaging drops back in on time.
+- X and Y are paged by the Z switch position after boot (`HandleKnobs`):
+  Middle = decay / note probability, Up = output source / solo. Page values
+  latch, use soft pickup (`kKnobPickup`) after a page change, and are never
+  persisted; `master_vol` is config-only. Zone-style knobs go through
+  `InsideZone`, which drops the hysteresis band at the ends of the travel.
 
 ## Known traps
 

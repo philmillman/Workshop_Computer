@@ -144,10 +144,12 @@ Default drum map (GM-ish, editable in the UI; `assign_note` must be unique):
 | 16  | 2    | out2_lane_mask           | lanes summed on AudioOut2 (percussive); default `0x0001` |
 | 18  | 1    | release_lead             | ms/4 (0–255 → 0–1020 ms); default 15 (60 ms)   |
 | 19  | 1    | release_bass             | default 30 (120 ms)                            |
-| 20  | 1    | master_vol               | 0–255 boot default; Y knob overrides live      |
+| 20  | 1    | master_vol               | 0–255 (the only volume control; no knob)       |
 | 21  | 1    | release_pad              | ms/4; default 60 (240 ms); 0 (old blobs' reserved byte) reads as the default |
 | 22  | 16   | midi_channel_to_part[16] | live USB-MIDI: 0 lead, 1 bass, 2 drums, 3 pad, 0xFF ignore. Default: ch1→0, ch2→1, ch3→3, ch10→2 |
-| 38  | 86   | reserved                 | `0xFF`                                         |
+| 38  | 1    | prob_part_mask           | parts the Y-knob (page 1) note probability thins: bit (1 << part), 0 lead, 1 bass, 2 drums, 3 pad; default `0x0F`; > `0x0F` (old blobs' `0xFF`) reads as `0x0F` |
+| 39  | 1    | decay_part_mask          | parts the X-knob (page 1) decay shortens, same bits; default `0x0F` |
+| 40  | 84   | reserved                 | `0xFF`                                         |
 | 124 | 4    | crc32                    | over bytes 0..123                              |
 
 Lane n ↔ directory slot 3 + n (`kSlotDrum0`).
@@ -202,8 +204,13 @@ Rules:
 ### `T?` JSON schema (single line)
 
 ```json
-{"playing":false,"role":"leader","linked":false,"mode":0,"song":0,"bpm":120.0,"tick":0}
+{"playing":false,"role":"leader","linked":false,"mode":0,"song":0,"bpm":120.0,"tick":0,
+ "diag":{...},"peerSeen":false,"peer":{...},"page":1,"solo":1,"src":0}
 ```
+
+`page`: X/Y knob page (1 = Z middle, 2 = Z up). `solo`: 0 = CV/pulse pair 1 only,
+1 = both, 2 = pair 2 only. `src`: 0 = per-output config, 1 = knob forcing all
+local, 2 = knob forcing all peer.
 
 ## 6. MIDI link protocol (module ↔ module, module ↔ DAW)
 

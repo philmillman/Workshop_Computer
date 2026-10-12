@@ -59,6 +59,21 @@ th { color: var(--dim); font-weight: 500; }
 label.cfg { display: flex; justify-content: space-between; align-items: center;
   gap: 10px; padding: 3px 0; }
 .cfggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 24px; }
+/* Config layout: Global spans the full width (its rows in two columns),
+   Melodic and Percussive sit side by side below it, one column each.
+   Narrow screens flow everything into a single column. */
+#cfgGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; align-items: start; }
+#cfgGlobal { grid-column: 1 / -1; }
+#cfgGlobal .cfggrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cfggroup .cfggrid { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 680px) {
+  #cfgGrid, #cfgGlobal .cfggrid { grid-template-columns: minmax(0, 1fr); }
+}
+.cfggroup h3 { margin: 0 0 6px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.cfggroup.inactive { opacity: .55; }
+.checks { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; justify-content: flex-end; }
+.checks label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }
+.cfg input[type=range] { width: 120px; vertical-align: middle; }
 .hint { color: var(--dim); font-size: 12px; }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--edge);
   border-radius: 10px; max-width: 640px; width: 90%; }
@@ -86,6 +101,7 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
       <span class="pill" id="stPlaying">–</span>
       <span class="pill" id="stBpm">–</span>
       <span class="pill" id="stLinked">–</span>
+      <span class="pill" id="stKnobs" title="X/Y knob page and page-2 settings">–</span>
       <span class="hint" id="stDiag"></span>
       <span style="flex:1"></span>
       <button id="btnPlay">Play</button>
@@ -119,8 +135,8 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
   </section>
 
   <section id="configPanel" hidden>
-    <h2>Configuration <span class="hint">— applies live; saved on the card when stopped</span></h2>
-    <div class="cfggrid" id="cfgGrid"></div>
+    <h2>Configuration <span class="hint">— applies live; saved on the card when stopped. Master volume lives here (the Y knob no longer sets it)</span></h2>
+    <div id="cfgGrid"></div>
   </section>
 
   <section id="applyPanel" hidden>
@@ -657,6 +673,7 @@ function defaultConfig() {
     outSrcBits: 0, fwdEnable: 0x0F, pulse1Lane: 0, pulse2Lane: 2, cv2Lane: 0,
     out2LaneMask: 0x0001, releaseLead: 15, releaseBass: 30, releasePad: 60, masterVol: 200,
     midiChannelToPart: chanMap,
+    probPartMask: 0x0F, decayPartMask: 0x0F, // bit (1 << part): 0 lead, 1 bass, 2 drums, 3 pad
   };
 }
 
@@ -672,6 +689,7 @@ function encodeConfig(c) {
   buf[18] = c.releaseLead; buf[19] = c.releaseBass; buf[20] = c.masterVol;
   buf[21] = c.releasePad;
   for (let i = 0; i < 16; i++) buf[22 + i] = c.midiChannelToPart[i];
+  buf[38] = c.probPartMask; buf[39] = c.decayPartMask;
   writeU32(buf, 124, crc32(buf.subarray(0, 124)));
   return buf;
 }
@@ -687,6 +705,9 @@ function decodeConfig(bytes) {
     releaseLead: bytes[18], releaseBass: bytes[19], masterVol: bytes[20],
     releasePad: bytes[21],
     midiChannelToPart: Array.from(bytes.subarray(22, 38)),
+    // Reserved 0xFF in old blobs reads as "all parts", as the firmware does
+    probPartMask: bytes[38] > 0x0F ? 0x0F : bytes[38],
+    decayPartMask: bytes[39] > 0x0F ? 0x0F : bytes[39],
   };
   return c;
 }
@@ -973,7 +994,8 @@ class MockDevice {
   constructor(flashBytes = 16 * 1024 * 1024, opts = {}) {
     this.flash = new Uint8Array(flashBytes).fill(0xFF);
     this.map = computeMap(flashBytes);
-    this.state = { playing: false, role: "leader", linked: false, mode: 0, song: 0, bpm: 120.0, tick: 0 };
+    this.state = { playing: false, role: "leader", linked: false, mode: 0, song: 0, bpm: 120.0, tick: 0,
+                   page: 1, solo: 1, src: 0 };
     this.config = defaultConfig();
     this.fragment = opts.fragment !== false;
     this.rngState = opts.seed || 42;
@@ -1310,6 +1332,15 @@ async function pollStatus() {
     $("stBpm").textContent = `${st.bpm} BPM`;
     $("stLinked").textContent = st.linked ? "linked" : "no link";
     $("stLinked").className = "pill" + (st.linked ? " on" : "");
+    if (st.page !== undefined) {
+      const solo = ["solo 1", "both", "solo 2"][st.solo] || "both";
+      const src = ["per config", "all local", "all peer"][st.src] || "per config";
+      $("stKnobs").textContent = `knob page ${st.page} · outs ${src} · ${solo}`;
+    }
+    if (state.config && state.config.engineMode !== st.mode) {
+      state.config.engineMode = st.mode; // changed on the hardware (long-press)
+      dimConfigGroups(st.mode);
+    }
     if (st.diag) {
       const fmt = d =>
         `${d.rs} resync · ${d.fw} freewheel · gap ${d.gap}ms · ` +
@@ -1600,6 +1631,14 @@ function drawWave(canvas, pcm) {
 }
 
 // ------------------------------------------------------------- config UI
+// Three groups: Global, Melodic, Percussive. The group for the engine mode
+// not currently running is dimmed but stays editable.
+function dimConfigGroups(mode) {
+  const mel = $("cfgMelodic"), perc = $("cfgPercussive");
+  if (mel) mel.classList.toggle("inactive", mode !== 0);
+  if (perc) perc.classList.toggle("inactive", mode !== 1);
+}
+
 function renderConfig() {
   const c = state.config;
   const grid = $("cfgGrid");
@@ -1607,29 +1646,63 @@ function renderConfig() {
   const sel = (opts, val, attr) =>
     `<select ${attr}>${opts.map((o, i) => `<option value="${i}" ${i === val ? "selected" : ""}>${o}</option>`).join("")}</select>`;
   const srcSel = (bit, attr) => sel(["local", "peer (remote)"], (c.outSrcBits >> bit) & 1, attr);
+  // Number inputs: shown value = stored value / scale (releases are stored in ms/4)
+  const num = (key, scale, min, max, step) =>
+    `<input type="number" data-k="${key}" data-scale="${scale}" min="${min}" max="${max}" step="${step}" value="${c[key] / scale}" style="width:70px">`;
+  const bitBox = (key, bit, label) =>
+    `<label><input type="checkbox" data-mask="${key}" data-bit="${bit}" ${(c[key] >> bit) & 1 ? "checked" : ""}>${label}</label>`;
+  const boxes = (key, items) => `<span class="checks">${items.map(([bit, name]) => bitBox(key, bit, name)).join("")}</span>`;
+  const fwdBox = (bit, label) =>
+    `<label class="cfg">${label} <input type="checkbox" data-fwd="${bit}" ${c.fwdEnable & (1 << bit) ? "checked" : ""}></label>`;
+  const group = (id, title, body) => `<div class="cfggroup" id="${id}"><h3>${title}</h3><div class="cfggrid">${body}</div></div>`;
+  // Part bits (1 << part): 0 lead, 1 bass, 2 drums, 3 pad
+  const melodicParts = [[0, "Lead"], [1, "Bass"], [3, "Pad"]];
+  const drumPart = [[2, "Drums"]];
+  const lanes = laneNames.map((n, i) => [i, n]);
 
-  grid.innerHTML = `
-    <label class="cfg">Engine mode ${sel(["melodic", "percussive"], c.engineMode, 'data-k="engineMode"')}</label>
-    <label class="cfg">CV Out 1 source ${srcSel(0, 'data-src="0"')}</label>
-    <label class="cfg">CV Out 2 source ${srcSel(1, 'data-src="1"')}</label>
-    <label class="cfg">Pulse Out 1 source ${srcSel(2, 'data-src="2"')}</label>
-    <label class="cfg">Pulse Out 2 source ${srcSel(3, 'data-src="3"')}</label>
-    <label class="cfg">Pulse 1 lane (perc) ${sel(laneNames, c.pulse1Lane, 'data-k="pulse1Lane"')}</label>
-    <label class="cfg">Pulse 2 lane (perc) ${sel(laneNames, c.pulse2Lane, 'data-k="pulse2Lane"')}</label>
-    <label class="cfg">CV 2 velocity lane ${sel(laneNames, c.cv2Lane, 'data-k="cv2Lane"')}</label>
-    <label class="cfg">Lead release (ms) <input type="number" data-k="releaseLead" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseLead * 4}" style="width:70px"></label>
-    <label class="cfg">Bass release (ms) <input type="number" data-k="releaseBass" data-scale="0.25" min="4" max="1020" step="4" value="${c.releaseBass * 4}" style="width:70px"></label>
-    <label class="cfg">Pad release (ms) <input type="number" data-k="releasePad" data-scale="0.25" min="4" max="1020" step="4" value="${c.releasePad * 4}" style="width:70px"></label>
-    <label class="cfg">Forward CV In 1 <input type="checkbox" data-fwd="0" ${c.fwdEnable & 1 ? "checked" : ""}></label>
-    <label class="cfg">Forward CV In 2 <input type="checkbox" data-fwd="1" ${c.fwdEnable & 2 ? "checked" : ""}></label>
-    <label class="cfg">Forward Pulse In 1 <input type="checkbox" data-fwd="2" ${c.fwdEnable & 4 ? "checked" : ""}></label>
-    <label class="cfg">Forward Pulse In 2 <input type="checkbox" data-fwd="3" ${c.fwdEnable & 8 ? "checked" : ""}></label>
-  `;
+  grid.innerHTML =
+    group("cfgGlobal", "Global", `
+      <label class="cfg">Engine mode ${sel(["melodic", "percussive"], c.engineMode, 'data-k="engineMode"')}</label>
+      <label class="cfg">Master volume <span class="checks"><input type="range" data-k="masterVol" min="0" max="255" value="${c.masterVol}"><span id="cfgVolVal">${c.masterVol}</span></span></label>
+      <label class="cfg">CV Out 1 source ${srcSel(0, 'data-src="0"')}</label>
+      <label class="cfg">CV Out 2 source ${srcSel(1, 'data-src="1"')}</label>
+      <label class="cfg">Pulse Out 1 source ${srcSel(2, 'data-src="2"')}</label>
+      <label class="cfg">Pulse Out 2 source ${srcSel(3, 'data-src="3"')}</label>
+      ${fwdBox(0, "Forward CV In 1 to peer")}
+      ${fwdBox(1, "Forward CV In 2 to peer")}
+      ${fwdBox(2, "Forward Pulse In 1 to peer")}
+      ${fwdBox(3, "Forward Pulse In 2 to peer")}
+    `) +
+    group("cfgMelodic", "Melodic", `
+      <label class="cfg">Lead release (ms) ${num("releaseLead", 0.25, 4, 1020, 4)}</label>
+      <label class="cfg">Bass release (ms) ${num("releaseBass", 0.25, 4, 1020, 4)}</label>
+      <label class="cfg">Pad release (ms) ${num("releasePad", 0.25, 4, 1020, 4)}</label>
+      <label class="cfg">Probability knob affects ${boxes("probPartMask", melodicParts)}</label>
+      <label class="cfg">Decay knob affects ${boxes("decayPartMask", melodicParts)}</label>
+    `) +
+    group("cfgPercussive", "Percussive", `
+      <label class="cfg">Pulse 1 lane ${sel(laneNames, c.pulse1Lane, 'data-k="pulse1Lane"')}</label>
+      <label class="cfg">Pulse 2 lane ${sel(laneNames, c.pulse2Lane, 'data-k="pulse2Lane"')}</label>
+      <label class="cfg">CV 2 velocity lane ${sel(laneNames, c.cv2Lane, 'data-k="cv2Lane"')}</label>
+      <label class="cfg">Probability knob affects ${boxes("probPartMask", drumPart)}</label>
+      <label class="cfg">Decay knob affects ${boxes("decayPartMask", drumPart)}</label>
+      <label class="cfg" style="align-items: flex-start">Audio Out 2 lanes ${boxes("out2LaneMask", lanes)}</label>
+    `);
+  dimConfigGroups(c.engineMode);
+
   grid.querySelectorAll("[data-k]").forEach(el => el.onchange = async () => {
-    const scale = +(el.dataset.scale || 1);
-    c[el.dataset.k] = Math.round((+el.value !== undefined && el.tagName === "INPUT" ? +el.value : +el.value) * scale) || +el.value * scale || +el.value;
-    if (el.tagName === "SELECT") c[el.dataset.k] = +el.value;
-    await pushConfig(el.dataset.k);
+    const key = el.dataset.k;
+    c[key] = Math.round(+el.value * +(el.dataset.scale || 1));
+    if (key === "engineMode") dimConfigGroups(c[key]);
+    await pushConfig(key);
+  });
+  grid.querySelectorAll('input[type="range"]').forEach(el => el.oninput = () => {
+    $("cfgVolVal").textContent = el.value;
+  });
+  grid.querySelectorAll("[data-mask]").forEach(el => el.onchange = async () => {
+    const key = el.dataset.mask, bit = +el.dataset.bit;
+    c[key] = (c[key] & ~(1 << bit)) | ((el.checked ? 1 : 0) << bit);
+    await pushConfig();
   });
   grid.querySelectorAll("[data-src]").forEach(el => el.onchange = async () => {
     const bit = +el.dataset.src;

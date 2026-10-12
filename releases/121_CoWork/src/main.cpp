@@ -34,7 +34,7 @@ int main()
 	sleep_ms(1);
 	set_sys_clock_khz(192000, true);
 
-	gFlashMap = FlashMap::Compute(gCard.FlashSizeBytes());
+	gFlashMap = FlashMap::Compute(gCard.FlashSize());
 
 	Config cfg = ConfigStore::LoadFromFlash(gFlashMap);
 	gShared.configStaging = cfg;

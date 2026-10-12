@@ -82,11 +82,26 @@ public:
 		else releaseLead_ = step;
 	}
 
+	// Decay knob (live): scale the configured melodic releases (Q8, 256 =
+	// as configured, 4 = 1/64) and give drums a linear decay from the hit
+	// (step per sample, 0 = one-shots play out). partMask selects which
+	// parts respond (1 << part).
+	void SetReleaseScale(int scaleQ8, uint8_t partMask)
+	{
+		if (scaleQ8 < 4) scaleQ8 = 4;
+		if (scaleQ8 > 256) scaleQ8 = 256;
+		releaseScaleQ8_ = scaleQ8;
+		decayPartMask_ = partMask;
+	}
+	void SetDrumDecayStep(int32_t step) { drumDecayStep_ = step < 0 ? 0 : step; }
+
 	int32_t ReleaseStepFor(uint8_t part) const
 	{
-		if (part == kPartBass) return releaseBass_;
-		if (part == kPartPad) return releasePad_;
-		return releaseLead_;
+		int32_t base = (part == kPartBass) ? releaseBass_
+		             : (part == kPartPad) ? releasePad_ : releaseLead_;
+		if (!(decayPartMask_ & (1u << part))) return base;
+		int32_t step = (base * 256) / releaseScaleQ8_;
+		return step > kEnvOne ? kEnvOne : step;
 	}
 
 	void SetOut2LaneMask(uint16_t mask) { out2Mask_ = mask; }
@@ -105,6 +120,7 @@ public:
 		v->lane = 0xFF;
 		v->chokeGroup = 0;
 		v->loop = ins.loop;
+		v->autoRelease = false;
 		v->releaseStep = ReleaseStepFor(part);
 		v->seq = ++allocSeq_;
 		v->Start(ins.data, ins.frames, PitchIncQ12(note, ins.root), VelGain(vel));
@@ -139,7 +155,9 @@ public:
 		v->lane = (uint8_t)lane;
 		v->chokeGroup = dl.choke;
 		v->loop = false;
-		v->releaseStep = kEnvOne / 480;
+		bool decay = drumDecayStep_ > 0 && (decayPartMask_ & (1u << kPartDrums));
+		v->autoRelease = decay;
+		v->releaseStep = decay ? drumDecayStep_ : kEnvOne / 480;
 		v->seq = ++allocSeq_;
 		v->Start(dl.data, dl.frames, kUnityIncQ12, VelGain(vel));
 	}
@@ -236,6 +254,9 @@ private:
 	int32_t releaseLead_ = kEnvOne / (60 * 48);
 	int32_t releaseBass_ = kEnvOne / (120 * 48);
 	int32_t releasePad_ = kEnvOne / (240 * 48);
+	int32_t releaseScaleQ8_ = 256;
+	uint8_t decayPartMask_ = 0x0F;
+	int32_t drumDecayStep_ = 0;
 	uint16_t out2Mask_ = 0x0001;
 	uint32_t allocSeq_ = 0;
 	bool percussive_ = false;

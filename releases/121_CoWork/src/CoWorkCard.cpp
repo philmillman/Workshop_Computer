@@ -3,15 +3,28 @@
 
 #include "pico/stdlib.h"
 
+#include <cstring>
+
 namespace cowork {
 
 // ===================== Sequencer::Listener =====================
 
 void CoWorkCard::OnNoteOn(uint8_t part, uint8_t note, uint8_t vel)
 {
+	if (part > kPartPad) return;
+	note &= 0x7F;
+
+	// Probability (Y knob, page 1): drop the note-on and remember it, so
+	// the matching note-off is dropped too and the gate counters balance.
+	if (DropByProbability(part)) {
+		if (part != kPartDrums) SetSkipped(part, note);
+		return;
+	}
+	if (part != kPartDrums) TakeSkipped(part, note); // replayed note: clear a stale mark
+
 	if (cfg_.engine_mode == 1) {
 		if (part != kPartDrums || !bank_) return;
-		uint8_t lane = bank_->noteToLane[note & 0x7F];
+		uint8_t lane = bank_->noteToLane[note];
 		if (lane == 0xFF) return;
 		engine_.DrumTrigger(lane, vel);
 		accentVel_ = vel;
@@ -36,6 +49,9 @@ void CoWorkCard::OnNoteOn(uint8_t part, uint8_t note, uint8_t vel)
 void CoWorkCard::OnNoteOff(uint8_t part, uint8_t note)
 {
 	if (cfg_.engine_mode == 1) return; // drum one-shots ignore offs
+	if (part > kPartPad) return;
+	note &= 0x7F;
+	if (TakeSkipped(part, note)) return; // its on was dropped by probability
 	if (part == kPartLead) {
 		engine_.NoteOff(kPartLead, note);
 		if (leadGate_ > 0) leadGate_--;
@@ -75,6 +91,7 @@ void CoWorkCard::ClearGates()
 	leadGate_ = 0;
 	bassGate_ = 0;
 	pulseTimer_[0] = pulseTimer_[1] = 0;
+	memset(skipped_, 0, sizeof(skipped_));
 }
 
 void CoWorkCard::StartTransport(bool resetPosition)
@@ -154,7 +171,7 @@ void CoWorkCard::LatchRoleAtBoot()
 	role_ = (SwitchVal() == Switch::Up) ? kLeader : kFollower;
 	gShared.statusRole = (role_ == kFollower) ? 1 : 0;
 	roleLatched_ = true;
-	bootKnobY_ = KnobVal(Knob::Y);
+	rng_ = (time_us_32() ^ 0x9E3779B9u) | 1; // xorshift needs a nonzero seed
 	clock_.Reset(cfg_.tempo_bpm_x10);
 }
 
@@ -217,6 +234,8 @@ void CoWorkCard::AdoptConfigIfChanged()
 	engine_.SetReleaseMs(kPartBass, (int)cfg_.release_bass * 4);
 	engine_.SetReleaseMs(kPartPad, (int)cfg_.release_pad * 4);
 	engine_.SetOut2LaneMask(cfg_.out2_lane_mask);
+	masterVolQ12_ = ((int32_t)cfg_.master_vol * 4096) / 255;
+	ApplyDecayKnob(); // decay_part_mask may have changed
 	if (modeChanged) ApplyEngineMode(cfg_.engine_mode);
 	gShared.statusMode = cfg_.engine_mode;
 	if (songChanged) {
@@ -412,6 +431,18 @@ void CoWorkCard::HandleSwitch()
 	wasDown_ = down;
 }
 
+// True when a knob reading sits inside zone `zone` of `n` equal zones by
+// more than the hysteresis band, so a knob resting on a boundary doesn't
+// flutter. The band is dropped at the ends of the travel: full CCW / full
+// CW must always reach the first / last zone.
+bool CoWorkCard::InsideZone(int32_t k, int zone, int n)
+{
+	int32_t lo = zone * 4096 / n, hi = (zone + 1) * 4096 / n;
+	bool aboveLo = (zone == 0) || k > lo + kZoneHyst;
+	bool belowHi = (zone == n - 1) || k < hi - kZoneHyst;
+	return aboveLo && belowHi;
+}
+
 // Loop-roll window lengths, CCW to CW: 1/4 beat (16th-note ratchet),
 // 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; the last
 // zone (full CW) = no looping.
@@ -437,15 +468,78 @@ uint32_t CoWorkCard::LoopZoneTicks(int zone) const
 	}
 }
 
+// Decay knob (X, page 1). Melodic: scale the configured releases, 1/64 at
+// full CCW up to 1x (as configured) at full CW. Percussive: a linear decay
+// from the hit, ~10 ms at full CCW doubling every sixth of the travel to
+// ~640 ms; the top of the travel means no decay (one-shots play out). The
+// Q15 envelope's integer step caps a linear decay near 0.7 s anyway.
+void CoWorkCard::ApplyDecayKnob()
+{
+	int scaleQ8 = 4 + (int)((decayKnob_ * 252) / 4095);
+	engine_.SetReleaseScale(scaleQ8, cfg_.decay_part_mask);
+
+	int32_t step = 0;
+	if (decayKnob_ < kDecayFull) {
+		int32_t seg = decayKnob_ / 667, frac = decayKnob_ % 667; // 0..5
+		int32_t base = 10 << seg;                                // 10..320 ms
+		int32_t ms = base + (base * frac) / 667;
+		step = kEnvOne / (ms * 48);
+		if (step < 1) step = 1;
+	}
+	engine_.SetDrumDecayStep(step);
+}
+
+// Probability knob (Y, page 1): full CW plays everything; below that each
+// note-on of an enabled part survives with chance knob/4096.
+bool CoWorkCard::DropByProbability(uint8_t part)
+{
+	if (probKnob_ >= kProbAlways) return false;
+	if (!(cfg_.prob_part_mask & (1u << part))) return false;
+	return (int32_t)(Rand() & 0xFFF) >= probKnob_;
+}
+
 void CoWorkCard::HandleKnobs()
 {
-	// X: reserved — the song's MIDI tempo map is the source of truth.
+	// X/Y page follows the Z switch: Middle = page 1 (decay / probability),
+	// Up = page 2 (output source / solo). Down (momentary) keeps the page.
+	Switch sw = SwitchVal();
+	int page = (sw == Switch::Up) ? 1 : (sw == Switch::Middle) ? 0 : page_;
+	int32_t kx = KnobVal(Knob::X), ky = KnobVal(Knob::Y);
+	if (page >= 0) {
+		if (page != page_) {
+			// Soft pickup: a knob is ignored until it moves on the new page
+			page_ = page;
+			baseX_ = kx;
+			baseY_ = ky;
+			pickX_ = pickY_ = false;
+		}
+		if (!pickX_ && (kx - baseX_ > kKnobPickup || baseX_ - kx > kKnobPickup))
+			pickX_ = true;
+		if (!pickY_ && (ky - baseY_ > kKnobPickup || baseY_ - ky > kKnobPickup))
+			pickY_ = true;
 
-	// Y: master volume, config value until the knob moves
-	int32_t ky = KnobVal(Knob::Y);
-	if (!volKnobPicked_ && bootKnobY_ >= 0 &&
-	    (ky - bootKnobY_ > kKnobPickup || bootKnobY_ - ky > kKnobPickup))
-		volKnobPicked_ = true;
+		if (page_ == 0) {
+			if (pickX_ && kx != decayKnob_) {
+				decayKnob_ = kx;
+				ApplyDecayKnob();
+			}
+			if (pickY_) probKnob_ = ky;
+		} else {
+			if (pickX_) {
+				// Two halves with hysteresis: CCW local, CW peer-forwarded
+				if (srcOverride_ != 1 && kx > 2048 + kZoneHyst) srcOverride_ = 1;
+				else if (srcOverride_ != 0 && kx < 2048 - kZoneHyst) srcOverride_ = 0;
+			}
+			if (pickY_) {
+				// Thirds with hysteresis: solo pair 1 / both / solo pair 2
+				int zone = (int)((ky * 3) / 4096);
+				if (zone != solo_ && InsideZone(ky, zone, 3)) solo_ = (uint8_t)zone;
+			}
+		}
+		gShared.statusPage = (uint32_t)page_ + 1;
+		gShared.statusSolo = solo_;
+		gShared.statusSrc = (uint32_t)(srcOverride_ + 1);
+	}
 
 	// Main: loop-roll length (absolute — full CW = off), with hysteresis
 	// so a knob resting on a zone boundary doesn't flutter.
@@ -453,9 +547,7 @@ void CoWorkCard::HandleKnobs()
 	int zone = (int)((km * 9) / 4096);
 	if (zone > 8) zone = 8;
 	if (zone != loopZone_) {
-		int32_t lo = zone * 4096 / 9;
-		int32_t hi = (zone + 1) * 4096 / 9;
-		if (loopZone_ < 0 || (km > lo + 40 && km < hi - 40)) {
+		if (loopZone_ < 0 || InsideZone(km, zone, 9)) {
 			loopZone_ = zone;
 			uint32_t len = LoopZoneTicks(zone);
 			if (len == 0) {
@@ -574,12 +666,10 @@ void CoWorkCard::RenderAndOutput()
 	int32_t a = 0, b = 0;
 	engine_.Render(a, b);
 
-	// Master volume: Y knob (after pickup) or config default. Voice sums
-	// are ~16-bit; >>4 lands in the 12-bit DAC range.
-	int32_t vol = volKnobPicked_ ? KnobVal(Knob::Y)
-	                             : ((int32_t)cfg_.master_vol * 4096) / 255;
-	a = (a * vol) >> 16;
-	b = (b * vol) >> 16;
+	// Master volume (config). Voice sums are ~16-bit; >>4 lands in the
+	// 12-bit DAC range.
+	a = (a * masterVolQ12_) >> 16;
+	b = (b * masterVolQ12_) >> 16;
 	if (a > 2047) a = 2047;
 	if (a < -2047) a = -2047;
 	if (b > 2047) b = 2047;
@@ -600,9 +690,18 @@ void CoWorkCard::RenderAndOutput()
 		(nowUs_ - remoteCvAtUs_[1]) < kRemoteStaleUs,
 	};
 
+	// Output source: config per output, or the page-2 X knob forcing all
+	// four local / peer. Solo (page-2 Y) mutes the other CV/pulse pair:
+	// its CV holds the last value (the DAC keeps what it was given) and
+	// its pulse sits low. Audio is unaffected.
+	uint8_t srcBits = srcOverride_ < 0 ? cfg_.out_src_bits
+	                : (srcOverride_ ? (uint8_t)0x0F : (uint8_t)0x00);
+	bool mute[2] = { solo_ == 2, solo_ == 0 };
+
 	// CV outs
 	for (int i = 0; i < 2; i++) {
-		bool useRemote = (cfg_.out_src_bits & (i == 0 ? kOutCV1 : kOutCV2)) &&
+		if (mute[i]) continue;
+		bool useRemote = (srcBits & (i == 0 ? kOutCV1 : kOutCV2)) &&
 		                 remoteCvFresh[i];
 		if (useRemote) {
 			CVOut(i, (int16_t)remoteCv_[i]);
@@ -616,10 +715,12 @@ void CoWorkCard::RenderAndOutput()
 
 	// Pulse outs
 	for (int i = 0; i < 2; i++) {
-		bool useRemote = (cfg_.out_src_bits & (i == 0 ? kOutPulse1 : kOutPulse2)) &&
+		bool useRemote = (srcBits & (i == 0 ? kOutPulse1 : kOutPulse2)) &&
 		                 remoteFresh[i];
 		bool level;
-		if (useRemote)
+		if (mute[i])
+			level = false;
+		else if (useRemote)
 			level = remotePulse_[i];
 		else if (cfg_.engine_mode == 0)
 			level = (i == 0) ? (leadGate_ > 0) : (bassGate_ > 0);

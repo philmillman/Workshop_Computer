@@ -19,6 +19,10 @@ constexpr uint8_t kOutCV2 = 1 << 1;
 constexpr uint8_t kOutPulse1 = 1 << 2;
 constexpr uint8_t kOutPulse2 = 1 << 3;
 
+// prob_part_mask / decay_part_mask: bit (1 << part), parts per SeqFormat.h
+// (0 lead, 1 bass, 2 drums, 3 pad)
+constexpr uint8_t kAllPartsMask = 0x0F;
+
 struct __attribute__((packed)) Config {
 	uint32_t magic;
 	uint16_t version;
@@ -37,7 +41,9 @@ struct __attribute__((packed)) Config {
 	uint8_t  master_vol;       // 0..255
 	uint8_t  release_pad;      // ms/4
 	uint8_t  midi_channel_to_part[16]; // 0 lead/1 bass/2 drums/3 pad or 0xFF ignore
-	uint8_t  reserved[86];
+	uint8_t  prob_part_mask;   // parts the probability knob thins: 1 << part
+	uint8_t  decay_part_mask;  // parts the decay knob shortens: 1 << part
+	uint8_t  reserved[84];
 	uint32_t crc32;            // over bytes 0..123
 };
 static_assert(sizeof(Config) == kConfigBytes, "Config must be 128 bytes");
@@ -66,6 +72,8 @@ inline void ConfigSetDefaults(Config &c)
 	c.midi_channel_to_part[1] = 1;  // ch2 -> bass
 	c.midi_channel_to_part[2] = 3;  // ch3 -> pad
 	c.midi_channel_to_part[9] = 2;  // ch10 -> drums
+	c.prob_part_mask = kAllPartsMask;
+	c.decay_part_mask = kAllPartsMask;
 }
 
 // Clamp fields that arrive over the wire into safe ranges.
@@ -84,6 +92,9 @@ inline void ConfigSanitize(Config &c, uint32_t songSlots)
 	for (int i = 0; i < 16; i++)
 		if (c.midi_channel_to_part[i] > 3 && c.midi_channel_to_part[i] != 0xFF)
 			c.midi_channel_to_part[i] = 0xFF;
+	// Old blobs hold 0xFF (reserved) here: read as "all parts"
+	if (c.prob_part_mask > kAllPartsMask) c.prob_part_mask = kAllPartsMask;
+	if (c.decay_part_mask > kAllPartsMask) c.decay_part_mask = kAllPartsMask;
 }
 
 } // namespace cowork

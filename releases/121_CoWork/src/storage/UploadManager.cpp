@@ -284,7 +284,8 @@ void UploadManager::CmdTransport()
 			"\"gap\":%lu,\"drp\":%lu,\"ovr\":%lu},"
 			"\"peerSeen\":%s,"
 			"\"peer\":{\"rs\":%lu,\"fw\":%lu,\"stp\":%lu,\"str\":%lu,"
-			"\"gap\":%lu,\"drp\":%lu,\"ovr\":%lu}}\n",
+			"\"gap\":%lu,\"drp\":%lu,\"ovr\":%lu},"
+			"\"page\":%lu,\"solo\":%lu,\"src\":%lu}\n",
 			gShared.transportRunning ? "true" : "false",
 			gShared.statusRole ? "follower" : "leader",
 			gShared.peerConnected ? "true" : "false",
@@ -306,7 +307,10 @@ void UploadManager::CmdTransport()
 			(unsigned long)gShared.peerDiag[3],
 			(unsigned long)(gShared.peerDiag[4] * 100), // sent as gap/100
 			(unsigned long)gShared.peerDiag[5],
-			(unsigned long)gShared.peerDiag[6]);
+			(unsigned long)gShared.peerDiag[6],
+			(unsigned long)gShared.statusPage,
+			(unsigned long)gShared.statusSolo,
+			(unsigned long)gShared.statusSrc);
 		if (n > 0) WriteAll((const uint8_t *)json, (uint32_t)n);
 		break;
 	}

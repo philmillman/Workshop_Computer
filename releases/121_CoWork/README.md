@@ -64,12 +64,21 @@ Notes:
 | Control | Function |
 |---|---|
 | Z switch at boot | Up = leader, Middle = follower |
+| Z switch after boot | Selects the **X/Y knob page**: Middle = page 1 (decay, probability), Up = page 2 (output source, solo). A leader therefore starts on page 2 — flip to Middle for page 1 |
 | Z tap (short press down) | Transport start/stop (leader); internal-clock start/stop (follower without clock) |
 | Z double tap | Next loaded song, skipping empty slots (lands at the loop point while running) |
 | Z hold ~1 s | Toggle melodic / percussive engine |
 | Main knob | **Loop roll**: loops the playing sequence — CCW to CW: 1/4 beat (16th-note ratchet), 1/2 beat, 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars; full CW = no looping. The song position (and the leader's clock out) keeps running underneath, so turning it back CW drops you where the song would have been |
-| X knob | Reserved — tempo always follows the song's MIDI tempo map (the follower's rate comes from the leader's clock) |
-| Y knob | Master volume |
+| X knob — page 1 (Z middle) | **Decay**: melodic — shortens the configured lead/bass/pad releases (full CW = as configured, down to 1/64); percussive — a decay from each hit, ~10 ms at full CCW to ~640 ms, full CW = one-shots play out. Which parts respond is set in the editor |
+| Y knob — page 1 (Z middle) | **Note probability**: the chance each sequenced note plays — full CW = every note, full CCW = none. Which parts respond is set in the editor |
+| X knob — page 2 (Z up) | **Output source**: CCW half = this module's own notes on all four CV/pulse jacks, CW half = the peer's forwarded CV/pulse inputs on all four. Until the knob moves, the per-output setting from the editor applies |
+| Y knob — page 2 (Z up) | **Solo**: lower third = CV/pulse pair 1 only (pair 2 muted: its CV holds, its pulse sits low), middle = both, upper third = pair 2 only. Audio is unaffected |
+
+Knob pages latch: a value set on one page stays while you use the other.
+After a page change a knob does nothing until you move it, so flipping the
+switch never jumps a setting. Tempo always follows the song's MIDI tempo map
+(a follower's rate comes from the leader's clock). Master volume is set in
+the web editor (Configuration → Global).
 
 ## Patching
 
@@ -87,7 +96,9 @@ Notes:
 
 Each CV/pulse **output** can be switched (in the web editor) between its
 local derivation and the **peer's forwarded inputs** — so a CV patched into
-module A can modulate something patched from module B.
+module A can modulate something patched from module B. The page-2 X knob
+overrides this live for all four outputs, and the page-2 Y knob solos one
+CV/pulse pair.
 
 ## LEDs
 
@@ -114,6 +125,11 @@ changes (routing, releases, note maps) apply live.
   and optional sustain loop.
 - **Drum kit**: 16 pads, GM-style default note map (editable), choke groups
   for open/closed hats.
+- **Configuration**: three groups — *Global* (engine mode, master volume,
+  output sources, input forwarding), *Melodic* (releases; which parts the
+  probability and decay knobs affect) and *Percussive* (trigger and
+  velocity lanes, Audio Out 2 lanes; whether the knobs affect drums). The
+  group for the engine mode not currently running is dimmed but editable.
 - **Folder import**: drop a whole folder (or a multi-file selection) of
   samples anywhere on the page — a review dialog matches files to slots by
   name (kick/snare/hat/tom/…, editable before staging), and a note in a
